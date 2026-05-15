@@ -38,8 +38,14 @@ app.use(cors());
 const clerkKey = env.get("CLERK_PUBLISHABLE_KEY");
 const clerkSecret = env.get("CLERK_SECRET_KEY");
 if (clerkKey && clerkSecret) {
-  app.use(clerkMiddleware({ publishableKey: clerkKey, secretKey: clerkSecret }));
-  console.log(chalk.gray("✓ Clerk auth enabled"));
+  app.use(
+    clerkMiddleware({
+      publishableKey: clerkKey,
+      secretKey: clerkSecret,
+      frontendApiProxy: { enabled: true },
+    })
+  );
+  console.log(chalk.gray("✓ Clerk auth enabled (proxy at /__clerk)"));
 } else {
   console.log(chalk.yellow("⚠ Clerk not configured — auth disabled"));
 }
@@ -301,7 +307,7 @@ const cronExpr =
 cron.schedule(cronExpr, runChecks);
 
 // ─── Start server ─────────────────────────────────────────────────────────
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 
 process.on("uncaughtException", (err) => {
   console.error(chalk.red("Uncaught exception:"), err);
@@ -312,7 +318,7 @@ process.on("unhandledRejection", (reason) => {
   console.error(chalk.red("Unhandled rejection:"), reason);
 });
 
-app.listen(PORT, () => {
+app.listen(PORT, "0.0.0.0", () => {
   console.log(chalk.bold.cyan("\n🛒 Price Watcher"));
   console.log(chalk.gray(`   API + UI running on http://localhost:${PORT}`));
   console.log(chalk.gray(`   Check interval: every ${interval} minutes`));
