@@ -7,7 +7,14 @@ const cors = require("cors");
 const path = require("path");
 const cron = require("node-cron");
 const chalk = require("chalk");
-const { clerkMiddleware, getAuth } = require("@clerk/express");
+const { clerkMiddleware, getAuth } = (() => {
+  try {
+    return require("@clerk/express");
+  } catch (err) {
+    console.error("Failed to load Clerk:", err.message);
+    return { clerkMiddleware: () => (req, res, next) => next(), getAuth: () => ({}) };
+  }
+})();
 
 const env = require("./lib/env");
 const configManager = require("./lib/config");
