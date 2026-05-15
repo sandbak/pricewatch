@@ -2,5 +2,8 @@ node_modules/
 config.json
 state.json
 .env
+.env.*
+!.env.example
+*.swp
 client/dist/
 client/node_modules/
