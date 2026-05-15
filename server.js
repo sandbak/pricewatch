@@ -27,20 +27,26 @@ const app = express();
 app.use(express.json());
 app.use(cors());
 
-// Clerk auth middleware (proxies /__clerk/* to Clerk Frontend API)
-app.use(
-  clerkMiddleware({
-    publishableKey: env.get("CLERK_PUBLISHABLE_KEY"),
-    secretKey: env.get("CLERK_SECRET_KEY"),
-  })
-);
+// Clerk auth middleware — only enable if keys are present
+const clerkKey = env.get("CLERK_PUBLISHABLE_KEY");
+const clerkSecret = env.get("CLERK_SECRET_KEY");
+if (clerkKey && clerkSecret) {
+  app.use(clerkMiddleware({ publishableKey: clerkKey, secretKey: clerkSecret }));
+  console.log(chalk.gray("✓ Clerk auth enabled"));
+} else {
+  console.log(chalk.yellow("⚠ Clerk not configured — auth disabled"));
+}
 
 // ─── API routes (all require auth) ───────────────────────────────────────
 
 function requireAuth(req, res, next) {
-  const { userId } = getAuth(req);
-  if (!userId) return res.status(401).json({ error: "Unauthenticated" });
-  next();
+  try {
+    const { userId } = getAuth(req) || {};
+    if (!userId) return res.status(401).json({ error: "Unauthenticated" });
+    next();
+  } catch {
+    return res.status(401).json({ error: "Auth unavailable — check Clerk configuration" });
+  }
 }
 
 // GET /api/products — list products with current prices from state
@@ -173,14 +179,21 @@ app.get("/api/status", requireAuth, (req, res) => {
 const clientDist = path.join(__dirname, "client", "dist");
 app.use(express.static(clientDist, {
   setHeaders: (res, filePath) => {
-    // Don't cache HTML so new JS/CSS bundles are always picked up
     if (filePath.endsWith(".html")) {
       res.set("Cache-Control", "no-cache");
     }
   },
 }));
-app.get("/{*path}", (req, res) => {
+
+// SPA fallback — serve index.html for any unmatched route
+app.use((req, res) => {
   res.sendFile(path.join(clientDist, "index.html"));
+});
+
+// Global error handler
+app.use((err, req, res, next) => {
+  console.error(chalk.red("Server error:"), err);
+  res.status(500).json({ error: err.message || "Internal server error" });
 });
 
 // ─── Start watcher cron ──────────────────────────────────────────────────
@@ -282,6 +295,16 @@ cron.schedule(cronExpr, runChecks);
 
 // ─── Start server ─────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3000;
+
+process.on("uncaughtException", (err) => {
+  console.error(chalk.red("Uncaught exception:"), err);
+  process.exit(1);
+});
+
+process.on("unhandledRejection", (reason) => {
+  console.error(chalk.red("Unhandled rejection:"), reason);
+});
+
 app.listen(PORT, () => {
   console.log(chalk.bold.cyan("\n🛒 Price Watcher"));
   console.log(chalk.gray(`   API + UI running on http://localhost:${PORT}`));
