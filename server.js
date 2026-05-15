@@ -301,7 +301,7 @@ const cronExpr =
 cron.schedule(cronExpr, runChecks);
 
 // ─── Start server ─────────────────────────────────────────────────────────
-const PORT = process.env.PORT || 3000;
+const PORT = 3000;
 
 process.on("uncaughtException", (err) => {
   console.error(chalk.red("Uncaught exception:"), err);
