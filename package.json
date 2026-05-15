@@ -22,7 +22,7 @@
     "cheerio": "^1.2.0",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
-    "express": "^5.2.1",
+    "express": "^4.22.2",
     "node-cron": "^4.2.1",
     "puppeteer": "^24.43.1",
     "readline-sync": "^1.4.10"
