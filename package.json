@@ -16,7 +16,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "@clerk/express": "^2.1.16",
+    "@clerk/express": "^2.1.17",
     "axios": "^1.16.0",
     "chalk": "^4.1.2",
     "cheerio": "^1.2.0",
