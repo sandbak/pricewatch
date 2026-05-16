@@ -119,7 +119,7 @@ app.get("/api/products", requireAuth, async (req, res) => {
   res.json(products);
 });
 
-// POST /api/products — add a product and immediately fetch its first price
+// POST /api/products — add a product and kick off first check in background
 app.post("/api/products", requireAuth, async (req, res) => {
   const { url, label, targetPrice, priceType, currency } = req.body;
 
@@ -142,9 +142,15 @@ app.post("/api/products", requireAuth, async (req, res) => {
       chatId: settings.telegram_chat_id,
     },
   };
-  const checkResult = await checkProduct(product, { cfg });
+  // Return immediately for responsive UX; run first scrape asynchronously.
   const latest = await store.getProductBySlug(req.authUser.id, product.id);
-  res.status(201).json({ ...latest, check: checkResult });
+  res.status(201).json(latest);
+
+  checkProduct(product, { cfg })
+    .then(() => {})
+    .catch((err) => {
+      console.log(chalk.yellow(`⚠ initial background check failed for ${product.label}: ${err.message}`));
+    });
 });
 
 // PUT /api/products/:id — update a product
