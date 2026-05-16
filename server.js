@@ -25,6 +25,9 @@ const { migrateLegacyForUser } = require("./lib/legacy-migration");
 const scrapers = require("./scrapers");
 const telegram = require("./telegram");
 
+// In-memory run locks per user to avoid duplicate concurrent checks.
+const activeUserChecks = new Set();
+
 // ─── Express app ──────────────────────────────────────────────────────────
 const app = express();
 
@@ -178,8 +181,21 @@ app.delete("/api/products/:id", requireAuth, async (req, res) => {
 
 // POST /api/check-now — manually run a full price check
 app.post("/api/check-now", requireAuth, async (req, res) => {
-  const result = await runChecksForUser(req.authUser.id);
-  res.json(result);
+  const userId = req.authUser.id;
+  if (activeUserChecks.has(userId)) {
+    return res.json({ ok: true, queued: false, running: true, message: "Check already running" });
+  }
+
+  activeUserChecks.add(userId);
+  runChecksForUser(userId)
+    .catch((err) => {
+      console.error(chalk.red("Manual check failed:"), err);
+    })
+    .finally(() => {
+      activeUserChecks.delete(userId);
+    });
+
+  res.json({ ok: true, queued: true, running: true });
 });
 
 // GET /api/config — get settings (Telegram creds masked)
