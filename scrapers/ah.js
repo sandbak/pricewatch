@@ -74,6 +74,11 @@ async function navigateAndExtract(page, url) {
     let promoText = null;
     const promoEls = document.querySelectorAll("[class*='promo']");
     for (const el of promoEls) {
+      const inRelatedProductCard = el.closest(
+        "[class*='cross-sell'], [class*='product-card'], [class*='product-results']"
+      );
+      if (inRelatedProductCard) continue;
+
       const text = el.textContent.trim();
       // Match patterns like "2 voor 3.99", "3 voor 10", "2 voor €3,99"
       const match = text.match(/(\d+)\s*voor\s*€?\s*([\d,.]+)/i);
