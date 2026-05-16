@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useApi } from "../api.js";
-import { Plus, Pencil, Trash2, ExternalLink } from "lucide-react";
+import { Plus, Pencil, Trash2, ExternalLink, RefreshCw } from "lucide-react";
 import ProductForm from "./ProductForm.jsx";
 
 function getStoreName(url) {
@@ -49,6 +49,11 @@ export default function ProductList() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["products"] }),
   });
 
+  const checkNowMutation = useMutation({
+    mutationFn: api.checkNow,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["products"] }),
+  });
+
   function handleDelete(id, label) {
     if (window.confirm(`Delete "${label}"?`)) {
       deleteMutation.mutate(id);
@@ -74,14 +79,33 @@ export default function ProductList() {
     <div>
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-lg font-semibold">Tracked Products</h2>
-        <button
-          onClick={handleAdd}
-          className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
-        >
-          <Plus size={16} />
-          Add Product
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => checkNowMutation.mutate()}
+            disabled={checkNowMutation.isPending || !products?.length}
+            className="flex items-center gap-2 bg-gray-800 hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed text-gray-100 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+          >
+            <RefreshCw
+              size={16}
+              className={checkNowMutation.isPending ? "animate-spin" : ""}
+            />
+            {checkNowMutation.isPending ? "Checking..." : "Check now"}
+          </button>
+          <button
+            onClick={handleAdd}
+            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+          >
+            <Plus size={16} />
+            Add Product
+          </button>
+        </div>
       </div>
+
+      {checkNowMutation.isError && (
+        <div className="mb-4 bg-red-900/40 border border-red-800 text-red-300 text-sm rounded-lg px-3 py-2">
+          {checkNowMutation.error.message}
+        </div>
+      )}
 
       {isLoading ? (
         <div className="space-y-3">

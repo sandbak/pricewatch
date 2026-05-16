@@ -31,5 +31,6 @@ export function useApi() {
     updateConfig: (data) => request("PUT", "/config", data),
     testTelegram: () => request("POST", "/config/test"),
     getStatus: () => request("GET", "/status"),
+    checkNow: () => request("POST", "/check-now"),
   };
 }

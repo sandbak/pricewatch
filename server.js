@@ -137,8 +137,8 @@ app.get("/api/products", requireAuth, (req, res) => {
   res.json(enriched);
 });
 
-// POST /api/products — add a product
-app.post("/api/products", requireAuth, (req, res) => {
+// POST /api/products — add a product and immediately fetch its first price
+app.post("/api/products", requireAuth, async (req, res) => {
   const { url, label, targetPrice, priceType, currency } = req.body;
 
   if (!url || !label || targetPrice == null) {
@@ -153,7 +153,18 @@ app.post("/api/products", requireAuth, (req, res) => {
     currency: currency || "EUR",
   });
 
-  res.status(201).json(product);
+  const checkResult = await checkProduct(product);
+  const state = stateManager.load();
+  const s = stateManager.get(state, product.id);
+
+  res.status(201).json({
+    ...product,
+    lastPrice: s.lastPrice,
+    lastChecked: s.lastChecked,
+    alertSent: s.alertSent,
+    promotion: s.promotion || null,
+    check: checkResult,
+  });
 });
 
 // PUT /api/products/:id — update a product
@@ -177,6 +188,12 @@ app.delete("/api/products/:id", requireAuth, (req, res) => {
   const deleted = configManager.deleteProduct(id);
   if (!deleted) return res.status(404).json({ error: "Product not found" });
   res.json({ ok: true });
+});
+
+// POST /api/check-now — manually run a full price check
+app.post("/api/check-now", requireAuth, async (req, res) => {
+  const result = await runChecks();
+  res.json(result);
 });
 
 // GET /api/config — get settings (Telegram creds masked)
@@ -266,14 +283,93 @@ app.use((err, req, res, next) => {
 });
 
 // ─── Start watcher cron ──────────────────────────────────────────────────
-function runChecks() {
+async function checkProduct(product, options = {}) {
+  const { cfg = null, state = stateManager.load(), delay = 0 } = options;
+  const label = product.label || product.id;
+
+  process.stdout.write(chalk.gray(`  Checking ${label}... `));
+
+  let result;
+  try {
+    result = await scrapers.scrape(product.url, {
+      priceType: product.priceType || "bonus",
+    });
+  } catch (err) {
+    console.log(chalk.yellow(`⚠ scrape failed: ${err.message}`));
+    return { id: product.id, ok: false, error: err.message };
+  }
+
+  if (result.price == null) {
+    console.log(chalk.yellow("⚠ price not found"));
+    return { id: product.id, ok: false, error: "price not found" };
+  }
+
+  const entry = stateManager.get(state, product.id);
+  stateManager.set(state, product.id, {
+    lastPrice: result.price,
+    lastChecked: new Date().toISOString(),
+    promotion: result.promotion || null,
+  });
+
+  const fmt = (n) => `€${n.toFixed(2).replace(".", ",")}`;
+  const promoUnitPrice = result.promotion?.unitPrice ?? null;
+  const effectivePrice =
+    promoUnitPrice != null ? Math.min(result.price, promoUnitPrice) : result.price;
+  const onSale = effectivePrice <= product.targetPrice;
+
+  if (onSale) {
+    if (!entry.alertSent) {
+      const dealViaPromo = promoUnitPrice != null && promoUnitPrice <= product.targetPrice;
+      if (dealViaPromo) {
+        console.log(
+          chalk.green(
+            `✓ ${fmt(promoUnitPrice)}/unit via "${result.promotion.label}" — UNDER TARGET!`
+          )
+        );
+      } else {
+        console.log(chalk.green(`✓ ${fmt(result.price)} — UNDER TARGET!`));
+      }
+
+      if (cfg?.telegram?.botToken && cfg?.telegram?.chatId) {
+        try {
+          await telegram.sendPriceAlert(cfg, product, result, { dealViaPromo });
+          stateManager.set(state, product.id, { alertSent: true });
+          console.log(chalk.green("    ✓ Telegram alert sent"));
+        } catch (err) {
+          console.log(chalk.red(`    ✗ Telegram send failed: ${err.message}`));
+        }
+      }
+    } else {
+      console.log(chalk.green(`✓ ${fmt(result.price)} — still under target`));
+    }
+  } else {
+    if (entry.alertSent) {
+      stateManager.set(state, product.id, { alertSent: false });
+      console.log(chalk.blue(`↑ ${fmt(result.price)} — price back above target`));
+    } else {
+      console.log(chalk.gray(`– ${fmt(result.price)} (target: ${fmt(product.targetPrice)})`));
+    }
+  }
+
+  stateManager.save(state);
+  if (delay) await new Promise((r) => setTimeout(r, delay));
+
+  return {
+    id: product.id,
+    ok: true,
+    price: result.price,
+    promotion: result.promotion || null,
+    onSale,
+  };
+}
+
+async function runChecks() {
   const config = configManager.load();
   const botToken = env.get("TELEGRAM_BOT_TOKEN");
   const chatId = env.get("TELEGRAM_CHAT_ID");
 
   if (!botToken || !chatId) {
-    console.log(chalk.yellow("⚠ Telegram not configured — skipping checks"));
-    return;
+    console.log(chalk.yellow("⚠ Telegram not configured — price checks still run, alerts disabled"));
   }
 
   const cfg = { ...config, telegram: { botToken, chatId } };
@@ -282,75 +378,18 @@ function runChecks() {
 
   const state = stateManager.load();
 
-  (async () => {
-    for (const product of cfg.products) {
-      const label = product.label || product.id;
-      process.stdout.write(chalk.gray(`  Checking ${label}... `));
+  const results = [];
+  for (const product of cfg.products) {
+    results.push(await checkProduct(product, { cfg, state, delay: 2000 }));
+  }
 
-      let result;
-      try {
-        result = await scrapers.scrape(product.url, {
-          priceType: product.priceType || "bonus",
-        });
-      } catch (err) {
-        console.log(chalk.yellow(`⚠ scrape failed: ${err.message}`));
-        continue;
-      }
-
-      if (result.price == null) {
-        console.log(chalk.yellow("⚠ price not found"));
-        continue;
-      }
-
-      const entry = stateManager.get(state, product.id);
-      stateManager.set(state, product.id, {
-        lastPrice: result.price,
-        lastChecked: new Date().toISOString(),
-        promotion: result.promotion || null,
-      });
-
-      const fmt = (n) => `€${n.toFixed(2).replace(".", ",")}`;
-      const promoUnitPrice = result.promotion?.unitPrice ?? null;
-      const effectivePrice =
-        promoUnitPrice != null ? Math.min(result.price, promoUnitPrice) : result.price;
-      const onSale = effectivePrice <= product.targetPrice;
-
-      if (onSale) {
-        if (!entry.alertSent) {
-          const dealViaPromo = promoUnitPrice != null && promoUnitPrice <= product.targetPrice;
-          if (dealViaPromo) {
-            console.log(
-              chalk.green(
-                `✓ ${fmt(promoUnitPrice)}/unit via "${result.promotion.label}" — UNDER TARGET!`
-              )
-            );
-          } else {
-            console.log(chalk.green(`✓ ${fmt(result.price)} — UNDER TARGET!`));
-          }
-          try {
-            await telegram.sendPriceAlert(cfg, product, result, { dealViaPromo });
-            stateManager.set(state, product.id, { alertSent: true });
-            console.log(chalk.green("    ✓ Telegram alert sent"));
-          } catch (err) {
-            console.log(chalk.red(`    ✗ Telegram send failed: ${err.message}`));
-          }
-        } else {
-          console.log(chalk.green(`✓ ${fmt(result.price)} — still under target`));
-        }
-      } else {
-        if (entry.alertSent) {
-          stateManager.set(state, product.id, { alertSent: false });
-          console.log(chalk.blue(`↑ ${fmt(result.price)} — price back above target`));
-        } else {
-          console.log(chalk.gray(`– ${fmt(result.price)} (target: ${fmt(product.targetPrice)})`));
-        }
-      }
-
-      stateManager.save(state);
-      await new Promise((r) => setTimeout(r, 2000));
-    }
-    console.log(chalk.gray("Done.\n"));
-  })();
+  console.log(chalk.gray("Done.\n"));
+  return {
+    ok: true,
+    checked: results.length,
+    failed: results.filter((r) => !r.ok).length,
+    results,
+  };
 }
 
 // Schedule cron
