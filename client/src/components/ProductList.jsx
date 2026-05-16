@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useApi } from "../api.js";
 import { Plus, Pencil, Trash2, ExternalLink, RefreshCw } from "lucide-react";
@@ -39,6 +39,15 @@ export default function ProductList() {
   const [editingProduct, setEditingProduct] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [isCheckingNow, setIsCheckingNow] = useState(false);
+  const checkBaselineRef = useRef(0);
+
+  const getNewestLastChecked = (list) => {
+    if (!Array.isArray(list) || list.length === 0) return 0;
+    return list.reduce((max, p) => {
+      const ts = p?.lastChecked ? new Date(p.lastChecked).getTime() : 0;
+      return ts > max ? ts : max;
+    }, 0);
+  };
 
   const { data: products, isLoading } = useQuery({
     queryKey: ["products"],
@@ -52,21 +61,28 @@ export default function ProductList() {
 
   const checkNowMutation = useMutation({
     mutationFn: api.checkNow,
-    onMutate: () => setIsCheckingNow(true),
+    onMutate: () => {
+      const baseline = getNewestLastChecked(queryClient.getQueryData(["products"]));
+      checkBaselineRef.current = baseline;
+      setIsCheckingNow(true);
+    },
     onSuccess: async () => {
-      // Kick off immediate refresh, then poll briefly while the backend check runs.
+      // Kick off immediate refresh, then poll until we actually see newer check data.
       await queryClient.invalidateQueries({ queryKey: ["products"] });
 
       let attempts = 0;
-      const maxAttempts = 8; // ~24s at 3s interval
+      const maxAttempts = 60; // ~5 minutes at 5s interval
       const timer = setInterval(async () => {
         attempts += 1;
         await queryClient.invalidateQueries({ queryKey: ["products"] });
-        if (attempts >= maxAttempts) {
+        const latest = getNewestLastChecked(queryClient.getQueryData(["products"]));
+        const baseline = checkBaselineRef.current || 0;
+
+        if (latest > baseline || attempts >= maxAttempts) {
           clearInterval(timer);
           setIsCheckingNow(false);
         }
-      }, 3000);
+      }, 5000);
     },
     onError: () => setIsCheckingNow(false),
   });
@@ -99,7 +115,7 @@ export default function ProductList() {
         <div className="flex items-center gap-2">
           <button
             onClick={() => checkNowMutation.mutate()}
-            disabled={isCheckingNow || checkNowMutation.isPending || !products?.length}
+            disabled={!!isCheckingNow || checkNowMutation.isPending || !products?.length}
             className="flex items-center gap-2 bg-gray-800 hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed text-gray-100 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
           >
             <RefreshCw
