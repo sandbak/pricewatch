@@ -137,6 +137,12 @@ async function requireAuth(req, res, next) {
   }
 }
 
+function unsupportedUrlResponse(res) {
+  return res.status(400).json({
+    error: `This shop is not supported yet. Please add a product URL from ${scrapers.SUPPORTED_DOMAINS.join(", ")}.`,
+  });
+}
+
 // GET /api/products — list products with current prices from DB
 app.get("/api/products", requireAuth, async (req, res) => {
   const products = await store.listProducts(req.authUser.id);
@@ -149,6 +155,10 @@ app.post("/api/products", requireAuth, async (req, res) => {
 
   if (!url || !label || targetPrice == null) {
     return res.status(400).json({ error: "url, label, and targetPrice are required" });
+  }
+
+  if (!scrapers.detect(url)) {
+    return unsupportedUrlResponse(res);
   }
 
   const product = await store.addProduct(req.authUser.id, {
@@ -184,6 +194,10 @@ app.put("/api/products/:id", requireAuth, async (req, res) => {
 
   if (updates.targetPrice != null) {
     updates.targetPrice = parseFloat(updates.targetPrice);
+  }
+
+  if (updates.url && !scrapers.detect(updates.url)) {
+    return unsupportedUrlResponse(res);
   }
 
   const product = await store.updateProduct(req.authUser.id, id, updates);

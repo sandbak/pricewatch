@@ -14,8 +14,15 @@ const SCRAPERS = {
  * @returns {{ domain: string, scraper: object } | null}
  */
 function detect(url) {
+  let hostname;
+  try {
+    hostname = new URL(url).hostname.replace(/^www\./, "").toLowerCase();
+  } catch {
+    return null;
+  }
+
   for (const [domain, scraper] of Object.entries(SCRAPERS)) {
-    if (url.includes(domain)) return { domain, scraper };
+    if (hostname === domain || hostname.endsWith(`.${domain}`)) return { domain, scraper };
   }
   return null;
 }
