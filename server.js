@@ -31,7 +31,11 @@ if (migrated) {
 
 // ─── Express app ──────────────────────────────────────────────────────────
 const app = express();
-app.use(express.json());
+
+// Railway terminates TLS before requests reach Express. Trust forwarded
+// headers so Clerk sees the public https:// origin during proxy/auth flows.
+app.set("trust proxy", 1);
+
 app.use(cors());
 
 // Clerk auth middleware — only enable if keys are present
@@ -49,6 +53,10 @@ if (clerkKey && clerkSecret) {
 } else {
   console.log(chalk.yellow("⚠ Clerk not configured — auth disabled"));
 }
+
+// Body parsing must run after Clerk's frontend API proxy. The proxy forwards
+// POST bodies for OAuth/sign-up verification and needs the raw request stream.
+app.use(express.json());
 
 // ─── API routes (all require auth) ───────────────────────────────────────
 
