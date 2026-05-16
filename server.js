@@ -291,6 +291,29 @@ app.put("/api/config", requireAuth, async (req, res) => {
   res.json({ ok: true });
 });
 
+// POST /api/config/discover-chat — discover Telegram chat ID after user messages bot
+app.post("/api/config/discover-chat", requireAuth, async (req, res) => {
+  const { botToken } = req.body;
+  const settings = await store.getSettings(req.authUser.id);
+  const token = (botToken || settings.telegram_bot_token || "").trim();
+
+  if (!token) {
+    return res.status(400).json({ error: "Bot token is required" });
+  }
+
+  try {
+    const chat = await telegram.discoverChat(token);
+    await store.updateSettings(req.authUser.id, {
+      botToken: token,
+      chatId: chat.chatId,
+    });
+
+    res.json({ ok: true, chat });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 // POST /api/config/test — send a test Telegram message
 app.post("/api/config/test", requireAuth, async (req, res) => {
   const settings = await store.getSettings(req.authUser.id);

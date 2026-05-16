@@ -80,4 +80,27 @@ async function sendTestMessage(botToken, chatId) {
   );
 }
 
-module.exports = { sendMessage, sendPriceAlert, sendTestMessage };
+async function discoverChat(botToken) {
+  const url = `https://api.telegram.org/bot${botToken}/getUpdates`;
+  const { data } = await axios.get(url);
+
+  if (!data.ok) {
+    throw new Error(data.description || "Telegram getUpdates failed");
+  }
+
+  const updates = [...(data.result || [])].reverse();
+  const update = updates.find((u) => u.message?.chat?.id || u.channel_post?.chat?.id);
+
+  if (!update) {
+    throw new Error("No chat found. Open your bot in Telegram and send /start, then try again.");
+  }
+
+  const chat = update.message?.chat || update.channel_post?.chat;
+  return {
+    chatId: String(chat.id),
+    type: chat.type,
+    title: chat.title || [chat.first_name, chat.last_name].filter(Boolean).join(" ") || chat.username || "Telegram chat",
+  };
+}
+
+module.exports = { sendMessage, sendPriceAlert, sendTestMessage, discoverChat };

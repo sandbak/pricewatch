@@ -1,14 +1,13 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useApi } from "../api.js";
-import { Send, Save, CheckCircle, AlertCircle } from "lucide-react";
+import { Send, Save, CheckCircle, AlertCircle, Search } from "lucide-react";
 
 export default function TelegramConfig() {
   const api = useApi();
   const queryClient = useQueryClient();
 
   const [botToken, setBotToken] = useState("");
-  const [chatId, setChatId] = useState("");
   const [checkInterval, setCheckInterval] = useState("");
   const [initialized, setInitialized] = useState(false);
   const [toast, setToast] = useState(null);
@@ -27,9 +26,8 @@ export default function TelegramConfig() {
 
   // Initialize form state from config (once)
   if (config && !initialized) {
-    setBotToken(config.botToken || "");
-    setChatId(config.chatId || "");
-    setCheckInterval(config.checkInterval != null ? String(config.checkInterval) : "60");
+    setBotToken("");
+    setCheckInterval(config.checkIntervalMinutes != null ? String(config.checkIntervalMinutes) : "60");
     setInitialized(true);
   }
 
@@ -37,8 +35,7 @@ export default function TelegramConfig() {
     mutationFn: () =>
       api.updateConfig({
         botToken: botToken.trim(),
-        chatId: chatId.trim(),
-        checkInterval: parseInt(checkInterval, 10) || 60,
+        checkIntervalMinutes: parseInt(checkInterval, 10) || 60,
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["config"] });
@@ -53,6 +50,15 @@ export default function TelegramConfig() {
     onError: (err) => showToast("error", err.message),
   });
 
+  const discoverMutation = useMutation({
+    mutationFn: () => api.discoverTelegramChat({ botToken: botToken.trim() }),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["config"] });
+      showToast("success", `Telegram chat connected: ${data.chat?.title || data.chat?.chatId}`);
+    },
+    onError: (err) => showToast("error", err.message),
+  });
+
   function showToast(type, message) {
     setToast({ type, message });
     setTimeout(() => setToast(null), 4000);
@@ -63,7 +69,8 @@ export default function TelegramConfig() {
     saveMutation.mutate();
   }
 
-  const hasBotToken = config?.botToken && config.botToken.length > 0;
+  const hasBotToken = config?.telegram?.botToken && config.telegram.botToken.length > 0;
+  const hasChatId = config?.telegram?.chatId && config.telegram.chatId.length > 0;
 
   return (
     <div className="space-y-6">
@@ -115,24 +122,19 @@ export default function TelegramConfig() {
               )}
             </div>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-300 mb-1">
-                Chat ID
-              </label>
-              <input
-                type="password"
-                value={chatId}
-                onChange={(e) => setChatId(e.target.value)}
-                placeholder={
-                  config?.chatId ? "••••••••" : "-1001234567890"
-                }
-                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              />
-              {config?.chatId && !chatId && (
-                <p className="mt-1 text-xs text-gray-500">
-                  Chat ID is configured. Enter a new value to change it.
-                </p>
-              )}
+            <div className="bg-gray-950/60 border border-gray-800 rounded-lg p-4 text-sm text-gray-300 space-y-2">
+              <p>
+                Telegram chat: {hasChatId ? (
+                  <span className="text-green-300 font-medium">connected</span>
+                ) : (
+                  <span className="text-yellow-300 font-medium">not connected</span>
+                )}
+              </p>
+              <ol className="list-decimal list-inside text-gray-400 space-y-1">
+                <li>Paste your bot token above.</li>
+                <li>Open your bot in Telegram and send <code className="text-gray-200">/start</code>.</li>
+                <li>Click “Find my chat”.</li>
+              </ol>
             </div>
 
             <div>
@@ -159,8 +161,17 @@ export default function TelegramConfig() {
               </button>
               <button
                 type="button"
+                onClick={() => discoverMutation.mutate()}
+                disabled={discoverMutation.isPending || (!botToken.trim() && !hasBotToken)}
+                className="flex items-center gap-2 bg-gray-800 hover:bg-gray-700 disabled:opacity-50 text-gray-200 px-4 py-2 rounded-lg text-sm font-medium transition-colors border border-gray-700"
+              >
+                <Search size={16} />
+                {discoverMutation.isPending ? "Finding..." : "Find my chat"}
+              </button>
+              <button
+                type="button"
                 onClick={() => testMutation.mutate()}
-                disabled={testMutation.isPending}
+                disabled={testMutation.isPending || !hasChatId}
                 className="flex items-center gap-2 bg-gray-800 hover:bg-gray-700 disabled:opacity-50 text-gray-200 px-4 py-2 rounded-lg text-sm font-medium transition-colors border border-gray-700"
               >
                 <Send size={16} />
@@ -192,8 +203,8 @@ export default function TelegramConfig() {
             <div className="flex justify-between">
               <dt className="text-gray-400">Last Check</dt>
               <dd className="text-gray-200 font-medium">
-                {status.lastCheck
-                  ? new Date(status.lastCheck).toLocaleString()
+                {status.lastChecked
+                  ? new Date(status.lastChecked).toLocaleString()
                   : "Never"}
               </dd>
             </div>

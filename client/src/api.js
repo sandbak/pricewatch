@@ -29,6 +29,7 @@ export function useApi() {
     deleteProduct: (id) => request("DELETE", `/products/${id}`),
     getConfig: () => request("GET", "/config"),
     updateConfig: (data) => request("PUT", "/config", data),
+    discoverTelegramChat: (data) => request("POST", "/config/discover-chat", data),
     testTelegram: () => request("POST", "/config/test"),
     getStatus: () => request("GET", "/status"),
     checkNow: () => request("POST", "/check-now"),
