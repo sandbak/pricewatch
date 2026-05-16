@@ -7,6 +7,7 @@ const cors = require("cors");
 const path = require("path");
 const cron = require("node-cron");
 const chalk = require("chalk");
+const { Readable } = require("stream");
 const { clerkMiddleware, getAuth } = (() => {
   try {
     return require("@clerk/express");
@@ -15,6 +16,7 @@ const { clerkMiddleware, getAuth } = (() => {
     return { clerkMiddleware: () => (req, res, next) => next(), getAuth: () => ({}) };
   }
 })();
+const { clerkFrontendApiProxy } = require("@clerk/backend/proxy");
 
 const env = require("./lib/env");
 const configManager = require("./lib/config");
@@ -42,11 +44,57 @@ app.use(cors());
 const clerkKey = env.get("CLERK_PUBLISHABLE_KEY");
 const clerkSecret = env.get("CLERK_SECRET_KEY");
 if (clerkKey && clerkSecret) {
+  app.use("/__clerk", async (req, res, next) => {
+    try {
+      const headers = new Headers();
+      Object.entries(req.headers).forEach(([key, value]) => {
+        if (value) headers.set(key, Array.isArray(value) ? value.join(", ") : value);
+      });
+
+      const protocol = req.protocol || (req.secure ? "https" : "http");
+      const host = req.get("host") || "localhost";
+      const url = new URL(req.originalUrl || req.url, `${protocol}://${host}`);
+      const hasBody = ["POST", "PUT", "PATCH"].includes(req.method);
+
+      const proxyResponse = await clerkFrontendApiProxy(
+        new Request(url.toString(), {
+          method: req.method,
+          headers,
+          body: hasBody ? Readable.toWeb(req) : undefined,
+          duplex: hasBody ? "half" : undefined,
+        }),
+        {
+          proxyPath: "/__clerk",
+          publishableKey: clerkKey,
+          secretKey: clerkSecret,
+        }
+      );
+
+      res.status(proxyResponse.status);
+
+      proxyResponse.headers.forEach((value, key) => {
+        if (key.toLowerCase() !== "set-cookie") res.setHeader(key, value);
+      });
+
+      const setCookies = proxyResponse.headers.getSetCookie?.();
+      if (setCookies?.length) {
+        res.setHeader("set-cookie", setCookies);
+      } else {
+        const setCookie = proxyResponse.headers.get("set-cookie");
+        if (setCookie) res.setHeader("set-cookie", setCookie);
+      }
+
+      if (!proxyResponse.body) return res.end();
+      Readable.fromWeb(proxyResponse.body).pipe(res);
+    } catch (err) {
+      next(err);
+    }
+  });
+
   app.use(
     clerkMiddleware({
       publishableKey: clerkKey,
       secretKey: clerkSecret,
-      frontendApiProxy: { enabled: true },
     })
   );
   console.log(chalk.gray("✓ Clerk auth enabled (proxy at /__clerk)"));
