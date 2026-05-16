@@ -27,6 +27,27 @@ const telegram = require("./telegram");
 
 // In-memory run locks per user to avoid duplicate concurrent checks.
 const activeUserChecks = new Set();
+const checkJobs = new Map();
+
+function createJob(userId) {
+  const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const job = {
+    id,
+    userId,
+    status: "queued",
+    createdAt: new Date().toISOString(),
+    startedAt: null,
+    finishedAt: null,
+    result: null,
+    error: null,
+  };
+  checkJobs.set(id, job);
+  return job;
+}
+
+function finishJob(job, patch) {
+  Object.assign(job, patch, { finishedAt: new Date().toISOString() });
+}
 
 // ─── Express app ──────────────────────────────────────────────────────────
 const app = express();
@@ -183,19 +204,65 @@ app.delete("/api/products/:id", requireAuth, async (req, res) => {
 app.post("/api/check-now", requireAuth, async (req, res) => {
   const userId = req.authUser.id;
   if (activeUserChecks.has(userId)) {
-    return res.json({ ok: true, queued: false, running: true, message: "Check already running" });
+    const running = [...checkJobs.values()]
+      .filter((j) => j.userId === userId && (j.status === "queued" || j.status === "running"))
+      .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))[0];
+
+    return res.json({
+      ok: true,
+      queued: false,
+      running: true,
+      message: "Check already running",
+      jobId: running?.id || null,
+    });
   }
 
+  const job = createJob(userId);
   activeUserChecks.add(userId);
+
   runChecksForUser(userId)
+    .then((result) => {
+      finishJob(job, {
+        status: "done",
+        result,
+      });
+    })
     .catch((err) => {
       console.error(chalk.red("Manual check failed:"), err);
+      finishJob(job, {
+        status: "failed",
+        error: err.message,
+      });
     })
     .finally(() => {
       activeUserChecks.delete(userId);
     });
 
-  res.json({ ok: true, queued: true, running: true });
+  Object.assign(job, {
+    status: "running",
+    startedAt: new Date().toISOString(),
+  });
+
+  res.json({ ok: true, queued: true, running: true, jobId: job.id });
+});
+
+// GET /api/check-now/:jobId — get manual check job status
+app.get("/api/check-now/:jobId", requireAuth, async (req, res) => {
+  const { jobId } = req.params;
+  const job = checkJobs.get(jobId);
+  if (!job || job.userId !== req.authUser.id) {
+    return res.status(404).json({ error: "Job not found" });
+  }
+
+  res.json({
+    id: job.id,
+    status: job.status,
+    createdAt: job.createdAt,
+    startedAt: job.startedAt,
+    finishedAt: job.finishedAt,
+    result: job.result,
+    error: job.error,
+  });
 });
 
 // GET /api/config — get settings (Telegram creds masked)

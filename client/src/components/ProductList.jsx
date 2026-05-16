@@ -39,15 +39,7 @@ export default function ProductList() {
   const [editingProduct, setEditingProduct] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [isCheckingNow, setIsCheckingNow] = useState(false);
-  const checkBaselineRef = useRef(0);
-
-  const getNewestLastChecked = (list) => {
-    if (!Array.isArray(list) || list.length === 0) return 0;
-    return list.reduce((max, p) => {
-      const ts = p?.lastChecked ? new Date(p.lastChecked).getTime() : 0;
-      return ts > max ? ts : max;
-    }, 0);
-  };
+  const checkPollRef = useRef(null);
 
   const { data: products, isLoading } = useQuery({
     queryKey: ["products"],
@@ -61,30 +53,42 @@ export default function ProductList() {
 
   const checkNowMutation = useMutation({
     mutationFn: api.checkNow,
-    onMutate: () => {
-      const baseline = getNewestLastChecked(queryClient.getQueryData(["products"]));
-      checkBaselineRef.current = baseline;
-      setIsCheckingNow(true);
-    },
-    onSuccess: async () => {
-      // Kick off immediate refresh, then poll until we actually see newer check data.
+    onMutate: () => setIsCheckingNow(true),
+    onSuccess: async (data) => {
       await queryClient.invalidateQueries({ queryKey: ["products"] });
 
-      let attempts = 0;
-      const maxAttempts = 60; // ~5 minutes at 5s interval
-      const timer = setInterval(async () => {
-        attempts += 1;
-        await queryClient.invalidateQueries({ queryKey: ["products"] });
-        const latest = getNewestLastChecked(queryClient.getQueryData(["products"]));
-        const baseline = checkBaselineRef.current || 0;
+      const jobId = data?.jobId;
+      if (!jobId) {
+        setIsCheckingNow(false);
+        return;
+      }
 
-        if (latest > baseline || attempts >= maxAttempts) {
-          clearInterval(timer);
+      let attempts = 0;
+      const maxAttempts = 120; // ~10 minutes at 5s interval
+      if (checkPollRef.current) {
+        clearInterval(checkPollRef.current);
+      }
+
+      checkPollRef.current = setInterval(async () => {
+        attempts += 1;
+        const job = await api.getCheckNowJob(jobId).catch(() => null);
+        await queryClient.invalidateQueries({ queryKey: ["products"] });
+
+        const done = job && (job.status === "done" || job.status === "failed");
+        if (done || attempts >= maxAttempts) {
+          clearInterval(checkPollRef.current);
+          checkPollRef.current = null;
           setIsCheckingNow(false);
         }
       }, 5000);
     },
-    onError: () => setIsCheckingNow(false),
+    onError: () => {
+      if (checkPollRef.current) {
+        clearInterval(checkPollRef.current);
+        checkPollRef.current = null;
+      }
+      setIsCheckingNow(false);
+    },
   });
 
   function handleDelete(id, label) {

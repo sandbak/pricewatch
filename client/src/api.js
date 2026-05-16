@@ -32,5 +32,6 @@ export function useApi() {
     testTelegram: () => request("POST", "/config/test"),
     getStatus: () => request("GET", "/status"),
     checkNow: () => request("POST", "/check-now"),
+    getCheckNowJob: (jobId) => request("GET", `/check-now/${jobId}`),
   };
 }
