@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { Show, SignIn, UserButton } from "@clerk/react";
+import { Show, UserButton } from "@clerk/react";
+import { Navigate } from "react-router-dom";
 import ProductList from "./components/ProductList.jsx";
 import TelegramConfig from "./components/TelegramConfig.jsx";
 
@@ -9,9 +10,7 @@ function App() {
   return (
     <>
       <Show when="signed-out">
-        <div className="min-h-screen bg-gray-950 flex items-center justify-center p-4">
-          <SignIn routing="hash" />
-        </div>
+        <Navigate to="/sign-in" replace />
       </Show>
 
       <Show when="signed-in">
