@@ -91,7 +91,7 @@ export default function ProductForm({ product, onClose }) {
               URL
             </label>
             <input
-              type="url"
+              type="text"
               value={url}
               onChange={(e) => setUrl(e.target.value)}
               placeholder="https://www.ah.nl/producten/..."
