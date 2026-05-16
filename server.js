@@ -19,17 +19,11 @@ const { clerkMiddleware, getAuth } = (() => {
 const { clerkFrontendApiProxy } = require("@clerk/backend/proxy");
 
 const env = require("./lib/env");
-const configManager = require("./lib/config");
-const stateManager = require("./state");
+const db = require("./lib/db");
+const store = require("./lib/store");
+const { migrateLegacyForUser } = require("./lib/legacy-migration");
 const scrapers = require("./scrapers");
 const telegram = require("./telegram");
-
-// ─── Migrate Telegram secrets from config.json to .env ────────────────────
-const CONFIG_PATH = path.join(__dirname, "config.json");
-const migrated = env.migrateTelegramFromConfig(CONFIG_PATH);
-if (migrated) {
-  console.log(chalk.green("✓ Migrated Telegram credentials from config.json to .env"));
-}
 
 // ─── Express app ──────────────────────────────────────────────────────────
 const app = express();
@@ -108,33 +102,21 @@ app.use(express.json());
 
 // ─── API routes (all require auth) ───────────────────────────────────────
 
-function requireAuth(req, res, next) {
+async function requireAuth(req, res, next) {
   try {
     const { userId } = getAuth(req) || {};
     if (!userId) return res.status(401).json({ error: "Unauthenticated" });
+    req.authUser = await store.getOrCreateUser(userId);
     next();
   } catch {
     return res.status(401).json({ error: "Auth unavailable — check Clerk configuration" });
   }
 }
 
-// GET /api/products — list products with current prices from state
-app.get("/api/products", requireAuth, (req, res) => {
-  const products = configManager.getProducts();
-  const state = stateManager.load();
-
-  const enriched = products.map((p) => {
-    const s = stateManager.get(state, p.id);
-    return {
-      ...p,
-      lastPrice: s.lastPrice,
-      lastChecked: s.lastChecked,
-      alertSent: s.alertSent,
-      promotion: s.promotion || null,
-    };
-  });
-
-  res.json(enriched);
+// GET /api/products — list products with current prices from DB
+app.get("/api/products", requireAuth, async (req, res) => {
+  const products = await store.listProducts(req.authUser.id);
+  res.json(products);
 });
 
 // POST /api/products — add a product and immediately fetch its first price
@@ -145,7 +127,7 @@ app.post("/api/products", requireAuth, async (req, res) => {
     return res.status(400).json({ error: "url, label, and targetPrice are required" });
   }
 
-  const product = configManager.addProduct({
+  const product = await store.addProduct(req.authUser.id, {
     url,
     label,
     targetPrice: parseFloat(targetPrice),
@@ -153,22 +135,20 @@ app.post("/api/products", requireAuth, async (req, res) => {
     currency: currency || "EUR",
   });
 
-  const checkResult = await checkProduct(product);
-  const state = stateManager.load();
-  const s = stateManager.get(state, product.id);
-
-  res.status(201).json({
-    ...product,
-    lastPrice: s.lastPrice,
-    lastChecked: s.lastChecked,
-    alertSent: s.alertSent,
-    promotion: s.promotion || null,
-    check: checkResult,
-  });
+  const settings = await store.getSettings(req.authUser.id);
+  const cfg = {
+    telegram: {
+      botToken: settings.telegram_bot_token,
+      chatId: settings.telegram_chat_id,
+    },
+  };
+  const checkResult = await checkProduct(product, { cfg });
+  const latest = await store.getProductBySlug(req.authUser.id, product.id);
+  res.status(201).json({ ...latest, check: checkResult });
 });
 
 // PUT /api/products/:id — update a product
-app.put("/api/products/:id", requireAuth, (req, res) => {
+app.put("/api/products/:id", requireAuth, async (req, res) => {
   const { id } = req.params;
   const updates = req.body;
 
@@ -176,59 +156,57 @@ app.put("/api/products/:id", requireAuth, (req, res) => {
     updates.targetPrice = parseFloat(updates.targetPrice);
   }
 
-  const product = configManager.updateProduct(id, updates);
+  const product = await store.updateProduct(req.authUser.id, id, updates);
   if (!product) return res.status(404).json({ error: "Product not found" });
 
   res.json(product);
 });
 
 // DELETE /api/products/:id — remove a product
-app.delete("/api/products/:id", requireAuth, (req, res) => {
+app.delete("/api/products/:id", requireAuth, async (req, res) => {
   const { id } = req.params;
-  const deleted = configManager.deleteProduct(id);
+  const deleted = await store.deleteProduct(req.authUser.id, id);
   if (!deleted) return res.status(404).json({ error: "Product not found" });
   res.json({ ok: true });
 });
 
 // POST /api/check-now — manually run a full price check
 app.post("/api/check-now", requireAuth, async (req, res) => {
-  const result = await runChecks();
+  const result = await runChecksForUser(req.authUser.id);
   res.json(result);
 });
 
 // GET /api/config — get settings (Telegram creds masked)
-app.get("/api/config", requireAuth, (req, res) => {
-  const settings = configManager.getSettings();
-  const botToken = env.get("TELEGRAM_BOT_TOKEN");
-  const chatId = env.get("TELEGRAM_CHAT_ID");
+app.get("/api/config", requireAuth, async (req, res) => {
+  const settings = await store.getSettings(req.authUser.id);
 
   res.json({
-    checkIntervalMinutes: settings.checkIntervalMinutes,
+    checkIntervalMinutes: settings.check_interval_minutes,
     telegram: {
-      botToken: botToken ? "***" : null,
-      chatId: chatId ? "***" : null,
+      botToken: settings.telegram_bot_token ? "***" : null,
+      chatId: settings.telegram_chat_id ? "***" : null,
     },
   });
 });
 
 // PUT /api/config — update settings and/or Telegram creds
-app.put("/api/config", requireAuth, (req, res) => {
+app.put("/api/config", requireAuth, async (req, res) => {
   const { checkIntervalMinutes, botToken, chatId } = req.body;
 
-  if (checkIntervalMinutes != null) {
-    configManager.updateSettings({ checkIntervalMinutes });
-  }
-
-  if (botToken) env.set("TELEGRAM_BOT_TOKEN", botToken);
-  if (chatId) env.set("TELEGRAM_CHAT_ID", chatId);
+  await store.updateSettings(req.authUser.id, {
+    checkIntervalMinutes,
+    botToken,
+    chatId,
+  });
 
   res.json({ ok: true });
 });
 
 // POST /api/config/test — send a test Telegram message
 app.post("/api/config/test", requireAuth, async (req, res) => {
-  const botToken = env.get("TELEGRAM_BOT_TOKEN");
-  const chatId = env.get("TELEGRAM_CHAT_ID");
+  const settings = await store.getSettings(req.authUser.id);
+  const botToken = settings.telegram_bot_token;
+  const chatId = settings.telegram_chat_id;
 
   if (!botToken || !chatId) {
     return res.status(400).json({ error: "Telegram not configured" });
@@ -243,19 +221,16 @@ app.post("/api/config/test", requireAuth, async (req, res) => {
 });
 
 // GET /api/status — watcher status
-app.get("/api/status", requireAuth, (req, res) => {
-  const settings = configManager.getSettings();
-  const products = configManager.getProducts();
-  const state = stateManager.load();
-
+app.get("/api/status", requireAuth, async (req, res) => {
+  const settings = await store.getSettings(req.authUser.id);
+  const products = await store.listProducts(req.authUser.id);
   const lastChecked = products.reduce((latest, p) => {
-    const s = stateManager.get(state, p.id);
-    return s.lastChecked && s.lastChecked > latest ? s.lastChecked : latest;
+    return p.lastChecked && p.lastChecked > latest ? p.lastChecked : latest;
   }, null);
 
   res.json({
     productCount: products.length,
-    checkIntervalMinutes: settings.checkIntervalMinutes,
+    checkIntervalMinutes: settings.check_interval_minutes,
     lastChecked,
     supportedDomains: scrapers.SUPPORTED_DOMAINS,
   });
@@ -284,7 +259,7 @@ app.use((err, req, res, next) => {
 
 // ─── Start watcher cron ──────────────────────────────────────────────────
 async function checkProduct(product, options = {}) {
-  const { cfg = null, state = stateManager.load(), delay = 0 } = options;
+  const { cfg = null, delay = 0 } = options;
   const label = product.label || product.id;
 
   process.stdout.write(chalk.gray(`  Checking ${label}... `));
@@ -304,8 +279,8 @@ async function checkProduct(product, options = {}) {
     return { id: product.id, ok: false, error: "price not found" };
   }
 
-  const entry = stateManager.get(state, product.id);
-  stateManager.set(state, product.id, {
+  const entry = product;
+  await store.upsertProductState(product.dbId, {
     lastPrice: result.price,
     lastChecked: new Date().toISOString(),
     promotion: result.promotion || null,
@@ -333,7 +308,7 @@ async function checkProduct(product, options = {}) {
       if (cfg?.telegram?.botToken && cfg?.telegram?.chatId) {
         try {
           await telegram.sendPriceAlert(cfg, product, result, { dealViaPromo });
-          stateManager.set(state, product.id, { alertSent: true });
+          await store.upsertProductState(product.dbId, { alertSent: true });
           console.log(chalk.green("    ✓ Telegram alert sent"));
         } catch (err) {
           console.log(chalk.red(`    ✗ Telegram send failed: ${err.message}`));
@@ -344,14 +319,13 @@ async function checkProduct(product, options = {}) {
     }
   } else {
     if (entry.alertSent) {
-      stateManager.set(state, product.id, { alertSent: false });
+      await store.upsertProductState(product.dbId, { alertSent: false });
       console.log(chalk.blue(`↑ ${fmt(result.price)} — price back above target`));
     } else {
       console.log(chalk.gray(`– ${fmt(result.price)} (target: ${fmt(product.targetPrice)})`));
     }
   }
 
-  stateManager.save(state);
   if (delay) await new Promise((r) => setTimeout(r, delay));
 
   return {
@@ -364,23 +338,30 @@ async function checkProduct(product, options = {}) {
 }
 
 async function runChecks() {
-  const config = configManager.load();
-  const botToken = env.get("TELEGRAM_BOT_TOKEN");
-  const chatId = env.get("TELEGRAM_CHAT_ID");
-
-  if (!botToken || !chatId) {
-    console.log(chalk.yellow("⚠ Telegram not configured — price checks still run, alerts disabled"));
-  }
-
-  const cfg = { ...config, telegram: { botToken, chatId } };
   const now = new Date().toLocaleString("nl-NL");
   console.log(chalk.bold(`\n[${now}] Running checks...`));
-
-  const state = stateManager.load();
-
+  const users = await store.listUsersWithSettings();
   const results = [];
-  for (const product of cfg.products) {
-    results.push(await checkProduct(product, { cfg, state, delay: 2000 }));
+
+  for (const u of users) {
+    const interval = Math.max(1, u.check_interval_minutes || 60);
+    const lastRun = u.last_run_at ? new Date(u.last_run_at).getTime() : 0;
+    const due = Date.now() - lastRun >= interval * 60 * 1000;
+    if (!due) continue;
+
+    const products = await store.listProducts(u.user_id);
+    const cfg = {
+      telegram: {
+        botToken: u.telegram_bot_token,
+        chatId: u.telegram_chat_id,
+      },
+    };
+
+    for (const product of products) {
+      results.push(await checkProduct(product, { cfg, delay: 2000 }));
+    }
+
+    await store.touchUserRun(u.user_id);
   }
 
   console.log(chalk.gray("Done.\n"));
@@ -392,13 +373,32 @@ async function runChecks() {
   };
 }
 
-// Schedule cron
-const interval = Math.max(1, configManager.load().checkIntervalMinutes || 60);
-const cronExpr =
-  interval >= 60
-    ? `0 */${Math.floor(interval / 60)} * * *`
-    : `*/${interval} * * * *`;
+async function runChecksForUser(userId) {
+  const settings = await store.getSettings(userId);
+  const products = await store.listProducts(userId);
+  const cfg = {
+    telegram: {
+      botToken: settings.telegram_bot_token,
+      chatId: settings.telegram_chat_id,
+    },
+  };
 
+  const results = [];
+  for (const product of products) {
+    results.push(await checkProduct(product, { cfg, delay: 2000 }));
+  }
+
+  await store.touchUserRun(userId);
+  return {
+    ok: true,
+    checked: results.length,
+    failed: results.filter((r) => !r.ok).length,
+    results,
+  };
+}
+
+// Schedule cron
+const cronExpr = "* * * * *";
 cron.schedule(cronExpr, runChecks);
 
 // ─── Start server ─────────────────────────────────────────────────────────
@@ -413,12 +413,28 @@ process.on("unhandledRejection", (reason) => {
   console.error(chalk.red("Unhandled rejection:"), reason);
 });
 
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(chalk.bold.cyan("\n🛒 Price Watcher"));
-  console.log(chalk.gray(`   API + UI running on http://localhost:${PORT}`));
-  console.log(chalk.gray(`   Check interval: every ${interval} minutes`));
-  console.log(chalk.gray(`   Products: ${configManager.getProducts().length}\n`));
+async function start() {
+  await db.initSchema();
 
-  // Run initial check
-  runChecks();
+  const legacyOwnerUserId = process.env.LEGACY_OWNER_USER_ID || null;
+  if (legacyOwnerUserId) {
+    const migrated = await migrateLegacyForUser(legacyOwnerUserId, env);
+    if (migrated.migrated) {
+      console.log(chalk.green(`✓ Migrated ${migrated.count} legacy products to user ${legacyOwnerUserId}`));
+    }
+  }
+
+  app.listen(PORT, "0.0.0.0", () => {
+    console.log(chalk.bold.cyan("\n🛒 Price Watcher"));
+    console.log(chalk.gray(`   API + UI running on http://localhost:${PORT}`));
+    console.log(chalk.gray("   Cron: every 1 minute (per-user intervals enforced)\n"));
+
+    // Run initial check
+    runChecks().catch((err) => console.error(chalk.red("Initial check failed:"), err));
+  });
+}
+
+start().catch((err) => {
+  console.error(chalk.red("Failed to start server:"), err);
+  process.exit(1);
 });
