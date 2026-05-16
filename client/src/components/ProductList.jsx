@@ -38,6 +38,7 @@ export default function ProductList() {
   const queryClient = useQueryClient();
   const [editingProduct, setEditingProduct] = useState(null);
   const [showForm, setShowForm] = useState(false);
+  const [isCheckingNow, setIsCheckingNow] = useState(false);
 
   const { data: products, isLoading } = useQuery({
     queryKey: ["products"],
@@ -51,7 +52,23 @@ export default function ProductList() {
 
   const checkNowMutation = useMutation({
     mutationFn: api.checkNow,
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["products"] }),
+    onMutate: () => setIsCheckingNow(true),
+    onSuccess: async () => {
+      // Kick off immediate refresh, then poll briefly while the backend check runs.
+      await queryClient.invalidateQueries({ queryKey: ["products"] });
+
+      let attempts = 0;
+      const maxAttempts = 8; // ~24s at 3s interval
+      const timer = setInterval(async () => {
+        attempts += 1;
+        await queryClient.invalidateQueries({ queryKey: ["products"] });
+        if (attempts >= maxAttempts) {
+          clearInterval(timer);
+          setIsCheckingNow(false);
+        }
+      }, 3000);
+    },
+    onError: () => setIsCheckingNow(false),
   });
 
   function handleDelete(id, label) {
@@ -82,14 +99,14 @@ export default function ProductList() {
         <div className="flex items-center gap-2">
           <button
             onClick={() => checkNowMutation.mutate()}
-            disabled={checkNowMutation.isPending || !products?.length}
+            disabled={isCheckingNow || checkNowMutation.isPending || !products?.length}
             className="flex items-center gap-2 bg-gray-800 hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed text-gray-100 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
           >
             <RefreshCw
               size={16}
-              className={checkNowMutation.isPending ? "animate-spin" : ""}
+              className={isCheckingNow || checkNowMutation.isPending ? "animate-spin" : ""}
             />
-            {checkNowMutation.isPending ? "Checking..." : "Check now"}
+            {isCheckingNow || checkNowMutation.isPending ? "Checking..." : "Check now"}
           </button>
           <button
             onClick={handleAdd}
