@@ -1,11 +1,13 @@
 const ah = require("./ah");
 const bol = require("./bol");
 const amazon = require("./amazon");
+const plus = require("./plus");
 
 const SCRAPERS = {
   "ah.nl": ah,
   "bol.com": bol,
   "amazon.nl": amazon,
+  "plus.nl": plus,
 };
 
 /**
