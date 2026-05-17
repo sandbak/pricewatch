@@ -25,10 +25,32 @@ const scrapers = require("./scrapers");
 const telegram = require("./telegram");
 
 // In-memory run locks per user to avoid duplicate concurrent checks.
-const activeUserChecks = new Set();
+const activeUserChecks = new Map();
 const checkJobs = new Map();
 const PROCESS_STARTED_AT = new Date();
 let lastCronRunAt = null;
+
+function beginUserCheck(userId, details = {}) {
+  if (activeUserChecks.has(userId)) return null;
+  const lock = {
+    userId,
+    source: details.source || "unknown",
+    jobId: details.jobId || null,
+    startedAt: new Date().toISOString(),
+  };
+  activeUserChecks.set(userId, lock);
+  return lock;
+}
+
+function endUserCheck(userId, lock) {
+  if (activeUserChecks.get(userId) === lock) {
+    activeUserChecks.delete(userId);
+  }
+}
+
+function getActiveUserCheck(userId) {
+  return activeUserChecks.get(userId) || null;
+}
 
 function createJob(userId) {
   const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -218,10 +240,9 @@ app.delete("/api/products/:id", requireAuth, async (req, res) => {
 // POST /api/check-now — manually run a full price check
 app.post("/api/check-now", requireAuth, async (req, res) => {
   const userId = req.authUser.id;
-  if (activeUserChecks.has(userId)) {
-    const running = [...checkJobs.values()]
-      .filter((j) => j.userId === userId && (j.status === "queued" || j.status === "running"))
-      .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))[0];
+  const activeCheck = getActiveUserCheck(userId);
+  if (activeCheck) {
+    const running = activeCheck.jobId ? checkJobs.get(activeCheck.jobId) : null;
 
     return res.json({
       ok: true,
@@ -233,7 +254,7 @@ app.post("/api/check-now", requireAuth, async (req, res) => {
   }
 
   const job = createJob(userId);
-  activeUserChecks.add(userId);
+  const lock = beginUserCheck(userId, { source: "manual", jobId: job.id });
 
   runChecksForUser(userId)
     .then((result) => {
@@ -250,7 +271,7 @@ app.post("/api/check-now", requireAuth, async (req, res) => {
       });
     })
     .finally(() => {
-      activeUserChecks.delete(userId);
+      endUserCheck(userId, lock);
     });
 
   Object.assign(job, {
@@ -488,19 +509,29 @@ async function runChecks() {
     const due = Date.now() - lastRun >= interval * 60 * 1000;
     if (!due) continue;
 
-    const products = await store.listProducts(u.user_id);
-    const cfg = {
-      telegram: {
-        botToken: u.telegram_bot_token,
-        chatId: u.telegram_chat_id,
-      },
-    };
-
-    for (const product of products) {
-      results.push(await checkProduct(product, { cfg, delay: 2000 }));
+    const lock = beginUserCheck(u.user_id, { source: "cron" });
+    if (!lock) {
+      console.log(chalk.gray(`  Skipping user ${u.user_id}: check already running`));
+      continue;
     }
 
-    await store.touchUserRun(u.user_id);
+    try {
+      const products = await store.listProducts(u.user_id);
+      const cfg = {
+        telegram: {
+          botToken: u.telegram_bot_token,
+          chatId: u.telegram_chat_id,
+        },
+      };
+
+      for (const product of products) {
+        results.push(await checkProduct(product, { cfg, delay: 2000 }));
+      }
+
+      await store.touchUserRun(u.user_id);
+    } finally {
+      endUserCheck(u.user_id, lock);
+    }
   }
 
   console.log(chalk.gray("Done.\n"));
