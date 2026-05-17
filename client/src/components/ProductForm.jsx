@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useApi } from "../api.js";
 
-const SUPPORTED_DOMAINS = ["ah.nl", "bol.com", "amazon.nl", "plus.nl"];
+const SUPPORTED_DOMAINS = ["ah.nl", "bol.com", "amazon.nl", "plus.nl", "jumbo.com"];
 
 function isSupportedUrl(value) {
   try {

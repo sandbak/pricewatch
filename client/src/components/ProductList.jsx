@@ -9,6 +9,7 @@ function getStoreName(url) {
   if (url.includes("ah.nl")) return "AH";
   if (url.includes("bol.com")) return "Bol";
   if (url.includes("amazon.nl") || url.includes("amazon.com")) return "Amazon";
+  if (url.includes("jumbo.com")) return "Jumbo";
   try {
     return new URL(url).hostname.replace("www.", "").split(".")[0];
   } catch {
