@@ -357,6 +357,7 @@ app.get("/api/status", requireAuth, async (req, res) => {
   res.json({
     productCount: products.length,
     checkIntervalMinutes: settings.check_interval_minutes,
+    lastRunAt: settings.last_run_at || null,
     lastChecked,
     supportedDomains: scrapers.SUPPORTED_DOMAINS,
   });

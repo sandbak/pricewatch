@@ -201,7 +201,15 @@ export default function TelegramConfig() {
               </dd>
             </div>
             <div className="flex justify-between">
-              <dt className="text-gray-400">Last Check</dt>
+              <dt className="text-gray-400">Last run attempt</dt>
+              <dd className="text-gray-200 font-medium">
+                {status.lastRunAt
+                  ? new Date(status.lastRunAt).toLocaleString()
+                  : "Never"}
+              </dd>
+            </div>
+            <div className="flex justify-between">
+              <dt className="text-gray-400">Last successful check</dt>
               <dd className="text-gray-200 font-medium">
                 {status.lastChecked
                   ? new Date(status.lastChecked).toLocaleString()
