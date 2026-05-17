@@ -1,5 +1,4 @@
 const { parsePrice } = require("./parsePrice");
-const { withRetry } = require("./retry");
 const { withPuppeteerPage } = require("./puppeteerPage");
 
 const HEADERS = {
@@ -173,8 +172,7 @@ async function scrape(url, options = {}) {
   const priceType = options.priceType || "regular";
 
   return withPuppeteerPage(HEADERS["User-Agent"], async (page) => {
-    const navigateWithRetry = withRetry(navigateAndExtract);
-    const result = await navigateWithRetry(page, url);
+    const result = await navigateAndExtract(page, url);
 
     const { dom, productDetails, promotionOffer } = result;
 

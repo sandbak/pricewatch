@@ -1,5 +1,4 @@
 const { parsePrice } = require("./parsePrice");
-const { withRetry } = require("./retry");
 const { withPuppeteerPage } = require("./puppeteerPage");
 
 const HEADERS = {
@@ -11,7 +10,6 @@ const HEADERS = {
 
 /**
  * Navigate to a URL and extract product data from the rendered page.
- * Wrapped in withRetry so transient failures are retried.
  */
 async function navigateAndExtract(page, url) {
   await page.setExtraHTTPHeaders({
@@ -120,9 +118,7 @@ async function scrape(url, options = {}) {
   const priceType = options.priceType || "bonus";
 
   return withPuppeteerPage(HEADERS["User-Agent"], async (page) => {
-    // Wrap navigation + extraction in withRetry
-    const navigateWithRetry = withRetry(navigateAndExtract);
-    const data = await navigateWithRetry(page, url);
+    const data = await navigateAndExtract(page, url);
 
     // Parse prices — prefer JSON-LD, fall back to CSS selectors
     const bonusPrice =
