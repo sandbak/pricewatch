@@ -26,9 +26,20 @@ const telegram = require("./telegram");
 const checkRunner = require("./services/check-runner");
 
 const checkJobs = new Map();
+const CHECK_JOB_TTL_MS = 30 * 60 * 1000;
 const PROCESS_STARTED_AT = new Date();
 
+function cleanupFinishedJobs(now = Date.now()) {
+  for (const [id, job] of checkJobs.entries()) {
+    if (!job.finishedAt) continue;
+    if (now - new Date(job.finishedAt).getTime() > CHECK_JOB_TTL_MS) {
+      checkJobs.delete(id);
+    }
+  }
+}
+
 function createJob(userId) {
+  cleanupFinishedJobs();
   const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const job = {
     id,
@@ -46,6 +57,7 @@ function createJob(userId) {
 
 function finishJob(job, patch) {
   Object.assign(job, patch, { finishedAt: new Date().toISOString() });
+  cleanupFinishedJobs();
 }
 
 // ─── Express app ──────────────────────────────────────────────────────────
@@ -260,6 +272,7 @@ app.post("/api/check-now", requireAuth, async (req, res) => {
 
 // GET /api/check-now/:jobId — get manual check job status
 app.get("/api/check-now/:jobId", requireAuth, async (req, res) => {
+  cleanupFinishedJobs();
   const { jobId } = req.params;
   const job = checkJobs.get(jobId);
   if (!job || job.userId !== req.authUser.id) {
