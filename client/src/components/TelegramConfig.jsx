@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useApi } from "../api.js";
 import { Send, Save, CheckCircle, AlertCircle, Search } from "lucide-react";
@@ -25,11 +25,12 @@ export default function TelegramConfig() {
   });
 
   // Initialize form state from config (once)
-  if (config && !initialized) {
+  useEffect(() => {
+    if (!config || initialized) return;
     setBotToken("");
     setCheckInterval(config.checkIntervalMinutes != null ? String(config.checkIntervalMinutes) : "60");
     setInitialized(true);
-  }
+  }, [config, initialized]);
 
   const saveMutation = useMutation({
     mutationFn: () =>

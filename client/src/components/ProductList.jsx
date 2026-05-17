@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useApi } from "../api.js";
 import { Plus, Pencil, Trash2, ExternalLink, RefreshCw } from "lucide-react";
@@ -55,6 +55,15 @@ export default function ProductList() {
     queryKey: ["products"],
     queryFn: api.getProducts,
   });
+
+  useEffect(() => {
+    return () => {
+      if (checkPollRef.current) {
+        clearInterval(checkPollRef.current);
+        checkPollRef.current = null;
+      }
+    };
+  }, []);
 
   const deleteMutation = useMutation({
     mutationFn: (id) => api.deleteProduct(id),
