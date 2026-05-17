@@ -22,6 +22,14 @@ function formatPrice(price) {
   return `€${Number(price).toFixed(2).replace(".", ",")}`;
 }
 
+function getPromotionDeal(promotion) {
+  if (!promotion) return null;
+  if (promotion.unitPrice != null) return { price: promotion.unitPrice, unitLabel: "stuk" };
+  if (promotion.totalPrice != null) return { price: promotion.totalPrice, unitLabel: null };
+  if (promotion.newPrice != null) return { price: promotion.newPrice, unitLabel: null };
+  return null;
+}
+
 function timeAgo(dateStr) {
   if (!dateStr) return "Never";
   const diff = Date.now() - new Date(dateStr).getTime();
@@ -183,11 +191,11 @@ export default function ProductList() {
             </thead>
             <tbody>
               {products.map((p) => {
-                const promoUnitPrice = p.promotion?.unitPrice ?? null;
+                const promoDeal = getPromotionDeal(p.promotion);
                 const effectivePrice =
-                  promoUnitPrice != null
-                    ? Math.min(p.lastPrice, promoUnitPrice)
-                    : p.lastPrice;
+                  promoDeal?.price != null && p.lastPrice != null
+                    ? Math.min(p.lastPrice, promoDeal.price)
+                    : promoDeal?.price ?? p.lastPrice;
                 const isBelow =
                   effectivePrice != null &&
                   p.targetPrice != null &&
@@ -221,7 +229,13 @@ export default function ProductList() {
                       {formatPrice(p.lastPrice)}
                       {p.promotion && (
                         <div className="text-xs text-yellow-400 mt-0.5">
-                          {p.promotion.label} → {formatPrice(p.promotion.unitPrice)}/stuk
+                          {p.promotion.label}
+                          {promoDeal && (
+                            <>
+                              {" → "}{formatPrice(promoDeal.price)}
+                              {promoDeal.unitLabel ? `/${promoDeal.unitLabel}` : ""}
+                            </>
+                          )}
                         </div>
                       )}
                     </td>

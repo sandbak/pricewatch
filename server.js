@@ -23,6 +23,7 @@ const db = require("./lib/db");
 const store = require("./lib/store");
 const scrapers = require("./scrapers");
 const telegram = require("./telegram");
+const { getPromotionDeal, getEffectivePrice } = require("./lib/pricing");
 
 // In-memory run locks per user to avoid duplicate concurrent checks.
 const activeUserChecks = new Map();
@@ -446,18 +447,18 @@ async function checkProduct(product, options = {}) {
   });
 
   const fmt = (n) => `€${n.toFixed(2).replace(".", ",")}`;
-  const promoUnitPrice = result.promotion?.unitPrice ?? null;
-  const effectivePrice =
-    promoUnitPrice != null ? Math.min(result.price, promoUnitPrice) : result.price;
+  const promoDeal = getPromotionDeal(result.promotion);
+  const effectivePrice = getEffectivePrice(result);
   const onSale = effectivePrice <= product.targetPrice;
 
   if (onSale) {
     if (!entry.alertSent) {
-      const dealViaPromo = promoUnitPrice != null && promoUnitPrice <= product.targetPrice;
+      const dealViaPromo = promoDeal?.price != null && promoDeal.price <= product.targetPrice;
       if (dealViaPromo) {
+        const unitSuffix = promoDeal.unitLabel ? `/${promoDeal.unitLabel}` : "";
         console.log(
           chalk.green(
-            `✓ ${fmt(promoUnitPrice)}/unit via "${result.promotion.label}" — UNDER TARGET!`
+            `✓ ${fmt(promoDeal.price)}${unitSuffix} via "${promoDeal.label}" — UNDER TARGET!`
           )
         );
       } else {

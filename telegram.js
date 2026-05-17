@@ -1,4 +1,5 @@
 const axios = require("axios");
+const { getPromotionDeal } = require("./lib/pricing");
 
 /**
  * Send a Telegram message.
@@ -35,13 +36,16 @@ async function sendPriceAlert(config, product, scrapeResult, opts = {}) {
 
   const label = esc(product.label || title);
   const promoLabel = promotion ? esc(promotion.label) : null;
+  const promoDeal = getPromotionDeal(promotion);
+  const promoPrice = promoDeal?.price ?? null;
+  const promoUnitSuffix = promoDeal?.unitLabel ? ` / ${promoDeal.unitLabel}` : "";
 
   let lines = [`🛒 <b>Prijsalert: ${label}</b>`, ""];
 
-  if (dealViaPromo && promotion) {
-    // Deal is via the promotion — lead with the promo unit price
-    lines.push(`💶 Prijs:         ${fmt(promotion.unitPrice)} / stuk`);
-    lines.push(`📦 Normaal:       ${fmt(price)} / stuk`);
+  if (dealViaPromo && promotion && promoDeal) {
+    // Deal is via the promotion — lead with the effective promo price
+    lines.push(`💶 Prijs:         ${fmt(promoPrice)}${promoUnitSuffix}`);
+    lines.push(`📦 Normaal:       ${fmt(price)}${promoUnitSuffix}`);
     lines.push(`🏷️ Actie:         ${promoLabel}`);
   } else if (regularPrice != null && regularPrice !== price) {
     // Regular sale price (not promo)
@@ -49,13 +53,13 @@ async function sendPriceAlert(config, product, scrapeResult, opts = {}) {
     lines.push(`📦 Normaal:       ${fmt(regularPrice)}`);
     if (savings > 0) lines.push(`💰 Besparing:    ${fmt(savings)}`);
     // Show promo as additional info if present
-    if (promotion) {
-      lines.push(`🏷️ Actie:         ${promoLabel} (${fmt(promotion.unitPrice)}/stuk)`);
+    if (promotion && promoDeal) {
+      lines.push(`🏷️ Actie:         ${promoLabel} (${fmt(promoPrice)}${promoUnitSuffix})`);
     }
   } else {
     lines.push(`💶 Prijs:         ${fmt(price)}`);
-    if (promotion) {
-      lines.push(`🏷️ Actie:         ${promoLabel} (${fmt(promotion.unitPrice)}/stuk)`);
+    if (promotion && promoDeal) {
+      lines.push(`🏷️ Actie:         ${promoLabel} (${fmt(promoPrice)}${promoUnitSuffix})`);
     }
   }
 
