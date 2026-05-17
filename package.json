@@ -10,7 +10,7 @@
     "start": "node server.js",
     "dev": "concurrently \"node server.js\" \"cd client && npm run dev\"",
     "build": "cd client && npm install && npm run build",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node scripts/smoke-pricing.js"
   },
   "keywords": [],
   "author": "",

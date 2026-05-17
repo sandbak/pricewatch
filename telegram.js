@@ -24,7 +24,7 @@ function esc(str) {
   return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-async function sendPriceAlert(config, product, scrapeResult, opts = {}) {
+function buildPriceAlertMessage(product, scrapeResult, opts = {}) {
   const { price, regularPrice, unitPrice, opIsOp, title, promotion } = scrapeResult;
   const { dealViaPromo = false } = opts;
 
@@ -70,7 +70,13 @@ async function sendPriceAlert(config, product, scrapeResult, opts = {}) {
 
   lines.push("", `🔗 ${product.url}`);
 
-  await sendMessage(config.telegram.botToken, config.telegram.chatId, lines.join("\n"));
+  return lines.join("\n");
+}
+
+async function sendPriceAlert(config, product, scrapeResult, opts = {}) {
+  const message = buildPriceAlertMessage(product, scrapeResult, opts);
+
+  await sendMessage(config.telegram.botToken, config.telegram.chatId, message);
 }
 
 /**
@@ -107,4 +113,4 @@ async function discoverChat(botToken) {
   };
 }
 
-module.exports = { sendMessage, sendPriceAlert, sendTestMessage, discoverChat };
+module.exports = { sendMessage, buildPriceAlertMessage, sendPriceAlert, sendTestMessage, discoverChat };
