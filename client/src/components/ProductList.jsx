@@ -3,15 +3,16 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useApi } from "../api.js";
 import { Plus, Pencil, Trash2, ExternalLink, RefreshCw } from "lucide-react";
 import ProductForm from "./ProductForm.jsx";
+import shops from "../../../shared/shops.json";
 
 function getStoreName(url) {
   if (!url) return "—";
-  if (url.includes("ah.nl")) return "AH";
-  if (url.includes("bol.com")) return "Bol";
-  if (url.includes("amazon.nl") || url.includes("amazon.com")) return "Amazon";
-  if (url.includes("jumbo.com")) return "Jumbo";
   try {
-    return new URL(url).hostname.replace("www.", "").split(".")[0];
+    const hostname = new URL(url).hostname.replace(/^www\./, "").toLowerCase();
+    const shop = shops.find(
+      ({ domain }) => hostname === domain || hostname.endsWith(`.${domain}`)
+    );
+    return shop?.name || hostname.split(".")[0];
   } catch {
     return "—";
   }

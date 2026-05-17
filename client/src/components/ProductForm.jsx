@@ -1,8 +1,9 @@
 import { useState, useEffect } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useApi } from "../api.js";
+import shops from "../../../shared/shops.json";
 
-const SUPPORTED_DOMAINS = ["ah.nl", "bol.com", "amazon.nl", "plus.nl", "jumbo.com"];
+const SUPPORTED_DOMAINS = shops.map((shop) => shop.domain);
 
 function isSupportedUrl(value) {
   try {

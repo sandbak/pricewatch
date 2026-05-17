@@ -3,14 +3,17 @@ const bol = require("./bol");
 const amazon = require("./amazon");
 const plus = require("./plus");
 const jumbo = require("./jumbo");
+const shops = require("../shared/shops.json");
 
-const SCRAPERS = {
+const SCRAPER_MODULES = {
   "ah.nl": ah,
   "bol.com": bol,
   "amazon.nl": amazon,
   "plus.nl": plus,
   "jumbo.com": jumbo,
 };
+
+const SUPPORTED_DOMAINS = shops.map((shop) => shop.domain);
 
 /**
  * Detect which scraper to use based on the URL.
@@ -25,7 +28,8 @@ function detect(url) {
     return null;
   }
 
-  for (const [domain, scraper] of Object.entries(SCRAPERS)) {
+  for (const domain of SUPPORTED_DOMAINS) {
+    const scraper = SCRAPER_MODULES[domain];
     if (hostname === domain || hostname.endsWith(`.${domain}`)) return { domain, scraper };
   }
   return null;
@@ -44,4 +48,4 @@ async function scrape(url, options = {}) {
   return match.scraper.scrape(url, options);
 }
 
-module.exports = { scrape, detect, SUPPORTED_DOMAINS: Object.keys(SCRAPERS) };
+module.exports = { scrape, detect, SUPPORTED_DOMAINS, SHOPS: shops };
