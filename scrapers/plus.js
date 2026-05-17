@@ -10,26 +10,30 @@ const HEADERS = {
 };
 
 /**
- * Capture the product details API response from OutSystems SPA.
- * The key endpoint is: /screenservices/ECP_Product_CW/ProductDetails/PDPContent/DataActionGetProductDetailsAndAgeInfo
- * Returns: { data: { ProductOut: { Overview: { Name, Price, BaseUnitPrice, ... } } } }
+ * Capture product details + promotion API responses from OutSystems SPA.
+ * Two endpoints:
+ * 1. DataActionGetProductDetailsAndAgeInfo → { data: { ProductOut: { Overview: { Name, Price, ... } } } }
+ * 2. DataActionGetPromotionOffer → { data: { Offer: { DisplayInfo_Label, PriceOriginal_Product, NewPrice, Package, ... } } }
  */
-function captureProductApi(page) {
+function captureProductApis(page) {
   return new Promise((resolve) => {
     let productDetails = null;
+    let promotionOffer = null;
 
     page.on("response", async (response) => {
       const url = response.url();
       const contentType = response.headers()["content-type"] || "";
 
-      if (
-        contentType.includes("application/json") &&
-        url.includes("DataActionGetProductDetailsAndAgeInfo")
-      ) {
+      if (contentType.includes("application/json")) {
         try {
           const body = await response.json().catch(() => null);
-          if (body?.data?.ProductOut) {
-            productDetails = body.data.ProductOut;
+          if (!body) return;
+
+          if (url.includes("DataActionGetProductDetailsAndAgeInfo")) {
+            productDetails = body.data?.ProductOut || null;
+          }
+          if (url.includes("DataActionGetPromotionOffer")) {
+            promotionOffer = body.data?.Offer || null;
           }
         } catch {
           /* ignore */
@@ -37,8 +41,10 @@ function captureProductApi(page) {
       }
     });
 
-    // Resolve after timeout to let API calls complete
-    setTimeout(() => resolve(productDetails), 8000);
+    setTimeout(
+      () => resolve({ productDetails, promotionOffer }),
+      8000
+    );
   });
 }
 
@@ -50,62 +56,117 @@ async function navigateAndExtract(page, url) {
     "Accept-Language": HEADERS["Accept-Language"],
   });
 
-  // Start capturing API before navigation
-  const apiPromise = captureProductApi(page);
+  const apiPromise = captureProductApis(page);
 
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
-
-  // Wait for JS rendering + API calls
   await new Promise((r) => setTimeout(r, 10000));
 
-  // Wait for product title to appear (confirms page is rendered)
   await page
     .waitForSelector("h1, [class*='product-header']", { timeout: 10000 })
-    .catch(() => {
-      /* proceed anyway */
-    });
+    .catch(() => {});
 
-  const apiData = await apiPromise;
+  const apis = await apiPromise;
 
-  // Extract from rendered DOM as fallback
+  // DOM data — price is most reliable from DOM since API doesn't always reflect promo price
   const domData = await page.evaluate(() => {
     const q = (sel) => {
       const el = document.querySelector(sel);
       return el ? el.textContent.trim() : null;
     };
 
-    // Title
     const title =
       q("h1") ||
       q("[class*='product-name']") ||
       q("[class*='product-title']") ||
       "Unknown product";
 
-    // Price — product-price-wrapper contains the full price
-    const priceText =
+    // Current price — use the integer+decimals combo (most reliable)
+    const priceInteger = q("[class*='product-header-price-integer']") || "";
+    const priceDecimals = q("[class*='product-header-price-decimals']") || "";
+    // Fallback: product-price div
+    const priceFallback =
+      q("[class*='product-price margin-top-s']") ||
       q("[class*='product-price-wrapper']") ||
-      q("[class*='product-price']") ||
-      q("[class*='product-header-price']") ||
       null;
 
-    // Previous/regular price (if on promotion)
+    // Regular (original) price — struck-through previous price
     const regularPriceText =
       q("[class*='product-header-price-previous']") ||
       q("[class*='old-price']") ||
-      q("[class*='original-price']") ||
       null;
 
-    // Promotion info
-    const promoText =
-      q("[class*='promotion']") ||
-      q("[class*='actie']") ||
-      q("[class*='offer-label']") ||
-      null;
+    // Promo label from DOM: "500 GRAM 2.49" or "2 VOOR 2.49"
+    const promoLabelText = q("[class*='promo-offer-label']") || null;
 
-    return { title, priceText, regularPriceText, promoText };
+    return {
+      title,
+      priceInteger,
+      priceDecimals,
+      priceFallback,
+      regularPriceText,
+      promoLabelText,
+    };
   });
 
-  return { dom: domData, apiData };
+  return { dom: domData, ...apis };
+}
+
+/**
+ * Parse promotion label like "2 VOOR 2.49" or "500 GRAM 2.49".
+ */
+function parsePromotion(offer, promoLabelText) {
+  if (!offer) return null;
+
+  const label = offer.DisplayInfo_Label || promoLabelText || "";
+  const originalPrice = offer.PriceOriginal_Product
+    ? parseFloat(offer.PriceOriginal_Product.replace(",", "."))
+    : null;
+  const newPrice = offer.NewPrice
+    ? parseFloat(offer.NewPrice.replace(",", "."))
+    : null;
+  const package_ = offer.Package || "";
+
+  // Multi-buy: "2 VOOR 2.49"
+  const multiBuyMatch = label.match(/(\d+)\s+VOOR\s+([\d,.]+)/i);
+  if (multiBuyMatch) {
+    const quantity = parseInt(multiBuyMatch[1], 10);
+    const totalPrice = parseFloat(multiBuyMatch[2].replace(",", "."));
+    return {
+      quantity,
+      totalPrice,
+      unitPrice: totalPrice / quantity,
+      label: `${quantity} voor €${totalPrice.toFixed(2).replace(".", ",")}`,
+      originalPrice,
+    };
+  }
+
+  // Weight/package price: "500 GRAM 2.49"
+  const weightMatch = label.match(/([\d]+)\s+GRAM\s+([\d,.]+)/i);
+  if (weightMatch) {
+    const grams = parseInt(weightMatch[1], 10);
+    const price = parseFloat(weightMatch[2].replace(",", "."));
+    const perKg = (price / grams) * 1000;
+    return {
+      quantity: grams,
+      unit: "gram",
+      totalPrice: price,
+      pricePerKg: perKg,
+      label: `${grams} gram €${price.toFixed(2).replace(".", ",")}`,
+      originalPrice,
+    };
+  }
+
+  // Fallback: just return what we have
+  if (originalPrice || newPrice) {
+    return {
+      label,
+      originalPrice,
+      newPrice: newPrice || null,
+      package: package_,
+    };
+  }
+
+  return null;
 }
 
 async function scrape(url, options = {}) {
@@ -124,43 +185,45 @@ async function scrape(url, options = {}) {
     const navigateWithRetry = withRetry(navigateAndExtract);
     const result = await navigateWithRetry(page, url);
 
-    const { dom, apiData } = result;
+    const { dom, productDetails, promotionOffer } = result;
 
-    // ── Extract from API (most reliable) ──
-    const overview = apiData?.Overview || {};
-    const apiTitle = overview.Name || overview.ProductName || null;
-    const apiPriceStr = overview.Price || "0";
-    const apiBaseUnitPrice = overview.BaseUnitPrice || null;
+    // ── Extract from product details API ──
+    const overview = productDetails?.Overview || {};
+    const apiTitle = overview.Name || null;
     const apiSubtitle = overview.Subtitle || null;
-
-    const apiPrice = apiPriceStr
-      ? parseFloat(String(apiPriceStr).replace(",", "."))
-      : null;
 
     // ── Title ──
     const title = apiTitle || dom.title || "Unknown product";
 
+    // ── Promotion ──
+    const promotion = parsePromotion(promotionOffer, dom.promoLabelText);
+
     // ── Prices ──
-    // API price is the current selling price
-    const bonusPrice =
-      apiPrice ??
-      parsePrice(dom.priceText);
+    // DOM is authoritative for current price (API Overview.Price doesn't reflect promos)
+    // Combine integer + decimals: "0." + "50" → "0.50"
+    const domPriceCombined = (dom.priceInteger || "") + (dom.priceDecimals || "");
+    const domPrice = domPriceCombined
+      ? parseFloat(domPriceCombined.replace(",", "."))
+      : null;
 
-    // Regular price: API doesn't expose original price when on promotion.
-    // The DOM "product-header-price-previous" may have it.
+    const currentPrice =
+      domPrice ??
+      parsePrice(dom.priceFallback);
+
+    // Regular (original) price: from promotion API or DOM
     const regularPrice =
+      promotion?.originalPrice ??
       parsePrice(dom.regularPriceText) ??
-      bonusPrice;
+      currentPrice;
 
-    const trackedPrice =
-      priceType === "bonus"
-        ? bonusPrice ?? regularPrice
-        : regularPrice ?? bonusPrice;
+    const trackedPrice = currentPrice ?? regularPrice;
 
-    // Unit price from subtitle: "Per Zak 500 g  (per kilo €4.78)"
+    // ── Unit price from subtitle: "Per Zak 500 g  (per kilo €4.78)" ──
     let unitPrice = null;
     if (apiSubtitle) {
-      const unitMatch = apiSubtitle.match(/\(per\s+(?:kilo|kg|stuk|liter|l)\s*[€]?\s*([\d]+[.,]\d+)\)/i);
+      const unitMatch = apiSubtitle.match(
+        /\(per\s+(?:kilo|kg|stuk|liter|l)\s*[€]?\s*([\d]+[.,]\d+)\)/i
+      );
       if (unitMatch) {
         unitPrice = parseFloat(unitMatch[1].replace(",", "."));
       }
@@ -170,9 +233,11 @@ async function scrape(url, options = {}) {
       title,
       price: trackedPrice,
       regularPrice,
-      unitPrice: unitPrice ? `€${unitPrice.toFixed(2).replace(".", ",")}` : null,
+      unitPrice: unitPrice
+        ? `€${unitPrice.toFixed(2).replace(".", ",")}`
+        : null,
       opIsOp: false,
-      promotion: null, // Plus doesn't expose promotion details in API
+      promotion,
       currency: "EUR",
     };
   } finally {
