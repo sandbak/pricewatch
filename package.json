@@ -25,8 +25,7 @@
     "express": "^4.22.2",
     "node-cron": "^4.2.1",
     "pg": "^8.16.3",
-    "puppeteer": "^24.43.1",
-    "readline-sync": "^1.4.10"
+    "puppeteer": "^24.43.1"
   },
   "devDependencies": {
     "concurrently": "^9.2.1"

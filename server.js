@@ -21,7 +21,6 @@ const { clerkFrontendApiProxy } = require("@clerk/backend/proxy");
 const env = require("./lib/env");
 const db = require("./lib/db");
 const store = require("./lib/store");
-const { migrateLegacyForUser } = require("./lib/legacy-migration");
 const scrapers = require("./scrapers");
 const telegram = require("./telegram");
 
@@ -555,14 +554,6 @@ process.on("unhandledRejection", (reason) => {
 
 async function start() {
   await db.initSchema();
-
-  const legacyOwnerUserId = process.env.LEGACY_OWNER_USER_ID || null;
-  if (legacyOwnerUserId) {
-    const migrated = await migrateLegacyForUser(legacyOwnerUserId, env);
-    if (migrated.migrated) {
-      console.log(chalk.green(`✓ Migrated ${migrated.count} legacy products to user ${legacyOwnerUserId}`));
-    }
-  }
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(chalk.bold.cyan("\n🛒 Price Watcher"));

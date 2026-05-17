@@ -1,88 +1,67 @@
 # 🛒 Price Watcher
 
-Monitors product prices on **ah.nl**, **bol.com**, and **amazon.nl** and sends a **Telegram message** when a product drops to or below your target price.
+Web app for tracking product prices and sending Telegram alerts when a product drops to or below your target price.
+
+## Supported shops
+
+| Shop | Notes |
+|---|---|
+| `ah.nl` | Tracks Bonuskaart price by default. Detects Op=Op and multi-buy deals. |
+| `bol.com` | Uses product structured data where available. |
+| `amazon.nl` | Best-effort; Amazon may change layouts or block scraping. |
+| `plus.nl` | Supports promotions from PLUS product APIs. |
+| `jumbo.com` | Supports regular offers and `2 voor` multi-buy deals. |
 
 ## Requirements
 
-- [Node.js](https://nodejs.org/) version 18 or higher
+- Node.js 20+
+- PostgreSQL database
+- Clerk app for authentication
+- Optional Telegram bot for alerts
 
-## Installation
+## Local development
 
 ```bash
 npm install
+cd client && npm install && cd ..
+npm run dev
 ```
 
-## Setup (first time only)
+The API runs from `server.js`; the Vite frontend runs from `client/`.
+
+## Environment variables
+
+Copy `.env.example` to `.env` and fill in:
 
 ```bash
-node setup.js
+CLERK_PUBLISHABLE_KEY=
+CLERK_SECRET_KEY=
+VITE_CLERK_PUBLISHABLE_KEY=
+VITE_CLERK_PROXY_URL=
+DATABASE_URL=
 ```
 
-The wizard will:
-1. Ask for your Telegram bot token and chat ID
-2. Send a test message to confirm everything works
-3. Let you add products to watch
-4. Write `config.json`
+Telegram credentials are configured per user in the web UI, not in local config files.
 
-### Getting a Telegram bot
-
-1. Open Telegram and message **@BotFather**
-2. Send `/newbot` and follow the prompts → you get a **bot token**
-3. Message your new bot (just say "hi")
-4. Open `https://api.telegram.org/bot<YOUR_TOKEN>/getUpdates` in your browser
-5. Find `"chat": { "id": 123456789 }` — that's your **chat ID**
-
-## Running
+## Production
 
 ```bash
-node watcher.js
+npm run build
+npm start
 ```
 
-Checks prices immediately on start, then on the interval set in `config.json` (default: 60 minutes).
+On Railway, deploy the app with a Postgres service and the environment variables above.
 
-### Keep it running in the background
+## How checks work
 
-```bash
-npx pm2 start watcher.js --name price-watcher
-npx pm2 save          # auto-restart on reboot
-npx pm2 logs price-watcher   # view logs
-npx pm2 stop price-watcher   # stop it
-```
-
-## Adding more products
-
-Either re-run `node setup.js`, or edit `config.json` directly:
-
-```json
-{
-  "products": [
-    {
-      "id": "illy-nespresso-ah",
-      "url": "https://www.ah.nl/producten/product/...",
-      "targetPrice": 24.99,
-      "priceType": "bonus",
-      "currency": "EUR",
-      "label": "Illy Nespresso 100st (AH)"
-    }
-  ]
-}
-```
-
-**`priceType`** — use `"bonus"` for AH to track the Bonuskaart price (default). Use `"regular"` to track the standard price.
-
-Changes to `config.json` take effect on the next check — no restart needed.
-
-## Supported sites
-
-| Site | Notes |
-|---|---|
-| `ah.nl` | Tracks Bonuskaart price by default. Detects Op=Op deals. |
-| `bol.com` | Good for branded food products (Illy, Holie's, etc.) |
-| `amazon.nl` | Best-effort — Amazon blocks scrapers aggressively |
+- Users add products in the web UI.
+- Product data and per-user settings are stored in Postgres.
+- The server runs a cron every minute and enforces each user's configured check interval.
+- Users can also trigger a manual "Check now" run from the UI.
 
 ## Notification format
 
-```
+```text
 🛒 Prijsalert: Illy Nespresso 100st (AH)
 
 💶 Prijs:        €24,99
@@ -90,12 +69,10 @@ Changes to `config.json` take effect on the next check — no restart needed.
 💰 Besparing:    €8,00
 🎯 Jouw limiet:  €25,00
 
-⚡️ Op=Op deal — zolang de voorraad strekt!
-
 🔗 https://www.ah.nl/...
 ```
 
 ## Notes
 
-- Scraping may break if a site changes its page layout. If prices stop being detected, check the logs for warnings.
-- This tool is for **personal use only**. Automated scraping may conflict with a site's Terms of Service.
+- Scraping may break if a shop changes its page layout.
+- This tool is for personal use only. Automated scraping may conflict with a site's Terms of Service.
