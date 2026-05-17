@@ -28,6 +28,8 @@ const telegram = require("./telegram");
 // In-memory run locks per user to avoid duplicate concurrent checks.
 const activeUserChecks = new Set();
 const checkJobs = new Map();
+const PROCESS_STARTED_AT = new Date();
+let lastCronRunAt = null;
 
 function createJob(userId) {
   const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -363,6 +365,16 @@ app.get("/api/status", requireAuth, async (req, res) => {
   });
 });
 
+// GET /api/health — lightweight runtime diagnostics
+app.get("/api/health", (req, res) => {
+  res.json({
+    ok: true,
+    startedAt: PROCESS_STARTED_AT.toISOString(),
+    uptimeSeconds: Math.floor(process.uptime()),
+    lastCronRunAt,
+  });
+});
+
 // ─── Serve React frontend ────────────────────────────────────────────────
 const clientDist = path.join(__dirname, "client", "dist");
 app.use(express.static(clientDist, {
@@ -465,6 +477,7 @@ async function checkProduct(product, options = {}) {
 }
 
 async function runChecks() {
+  lastCronRunAt = new Date().toISOString();
   const now = new Date().toLocaleString("nl-NL");
   console.log(chalk.bold(`\n[${now}] Running checks...`));
   const users = await store.listUsersWithSettings();
