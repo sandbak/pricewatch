@@ -23,35 +23,10 @@ const db = require("./lib/db");
 const store = require("./lib/store");
 const scrapers = require("./scrapers");
 const telegram = require("./telegram");
-const { getPromotionDeal, getEffectivePrice } = require("./lib/pricing");
+const checkRunner = require("./services/check-runner");
 
-// In-memory run locks per user to avoid duplicate concurrent checks.
-const activeUserChecks = new Map();
 const checkJobs = new Map();
 const PROCESS_STARTED_AT = new Date();
-let lastCronRunAt = null;
-
-function beginUserCheck(userId, details = {}) {
-  if (activeUserChecks.has(userId)) return null;
-  const lock = {
-    userId,
-    source: details.source || "unknown",
-    jobId: details.jobId || null,
-    startedAt: new Date().toISOString(),
-  };
-  activeUserChecks.set(userId, lock);
-  return lock;
-}
-
-function endUserCheck(userId, lock) {
-  if (activeUserChecks.get(userId) === lock) {
-    activeUserChecks.delete(userId);
-  }
-}
-
-function getActiveUserCheck(userId) {
-  return activeUserChecks.get(userId) || null;
-}
 
 function createJob(userId) {
   const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -204,7 +179,7 @@ app.post("/api/products", requireAuth, async (req, res) => {
   const latest = await store.getProductBySlug(req.authUser.id, product.id);
   res.status(201).json(latest);
 
-  checkProduct(product, { cfg })
+  checkRunner.checkProduct(product, { cfg })
     .then(() => {})
     .catch((err) => {
       console.log(chalk.yellow(`⚠ initial background check failed for ${product.label}: ${err.message}`));
@@ -241,7 +216,7 @@ app.delete("/api/products/:id", requireAuth, async (req, res) => {
 // POST /api/check-now — manually run a full price check
 app.post("/api/check-now", requireAuth, async (req, res) => {
   const userId = req.authUser.id;
-  const activeCheck = getActiveUserCheck(userId);
+  const activeCheck = checkRunner.getActiveUserCheck(userId);
   if (activeCheck) {
     const running = activeCheck.jobId ? checkJobs.get(activeCheck.jobId) : null;
 
@@ -255,9 +230,9 @@ app.post("/api/check-now", requireAuth, async (req, res) => {
   }
 
   const job = createJob(userId);
-  const lock = beginUserCheck(userId, { source: "manual", jobId: job.id });
+  const lock = checkRunner.beginUserCheck(userId, { source: "manual", jobId: job.id });
 
-  runChecksForUser(userId)
+  checkRunner.runChecksForUser(userId)
     .then((result) => {
       finishJob(job, {
         status: "done",
@@ -272,7 +247,7 @@ app.post("/api/check-now", requireAuth, async (req, res) => {
       });
     })
     .finally(() => {
-      endUserCheck(userId, lock);
+      checkRunner.endUserCheck(userId, lock);
     });
 
   Object.assign(job, {
@@ -392,7 +367,7 @@ app.get("/api/health", (req, res) => {
     ok: true,
     startedAt: PROCESS_STARTED_AT.toISOString(),
     uptimeSeconds: Math.floor(process.uptime()),
-    lastCronRunAt,
+    lastCronRunAt: checkRunner.getLastCronRunAt(),
   });
 });
 
@@ -417,160 +392,9 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: err.message || "Internal server error" });
 });
 
-// ─── Start watcher cron ──────────────────────────────────────────────────
-async function checkProduct(product, options = {}) {
-  const { cfg = null, delay = 0 } = options;
-  const label = product.label || product.id;
-
-  process.stdout.write(chalk.gray(`  Checking ${label}... `));
-
-  let result;
-  try {
-    result = await scrapers.scrape(product.url, {
-      priceType: product.priceType || "bonus",
-    });
-  } catch (err) {
-    console.log(chalk.yellow(`⚠ scrape failed: ${err.message}`));
-    return { id: product.id, ok: false, error: err.message };
-  }
-
-  if (result.price == null) {
-    console.log(chalk.yellow("⚠ price not found"));
-    return { id: product.id, ok: false, error: "price not found" };
-  }
-
-  const entry = product;
-  await store.upsertProductState(product.dbId, {
-    lastPrice: result.price,
-    lastChecked: new Date().toISOString(),
-    promotion: result.promotion || null,
-  });
-
-  const fmt = (n) => `€${n.toFixed(2).replace(".", ",")}`;
-  const promoDeal = getPromotionDeal(result.promotion);
-  const effectivePrice = getEffectivePrice(result);
-  const onSale = effectivePrice <= product.targetPrice;
-
-  if (onSale) {
-    if (!entry.alertSent) {
-      const dealViaPromo = promoDeal?.price != null && promoDeal.price <= product.targetPrice;
-      if (dealViaPromo) {
-        const unitSuffix = promoDeal.unitLabel ? `/${promoDeal.unitLabel}` : "";
-        console.log(
-          chalk.green(
-            `✓ ${fmt(promoDeal.price)}${unitSuffix} via "${promoDeal.label}" — UNDER TARGET!`
-          )
-        );
-      } else {
-        console.log(chalk.green(`✓ ${fmt(result.price)} — UNDER TARGET!`));
-      }
-
-      if (cfg?.telegram?.botToken && cfg?.telegram?.chatId) {
-        try {
-          await telegram.sendPriceAlert(cfg, product, result, { dealViaPromo });
-          await store.upsertProductState(product.dbId, { alertSent: true });
-          console.log(chalk.green("    ✓ Telegram alert sent"));
-        } catch (err) {
-          console.log(chalk.red(`    ✗ Telegram send failed: ${err.message}`));
-        }
-      }
-    } else {
-      console.log(chalk.green(`✓ ${fmt(result.price)} — still under target`));
-    }
-  } else {
-    if (entry.alertSent) {
-      await store.upsertProductState(product.dbId, { alertSent: false });
-      console.log(chalk.blue(`↑ ${fmt(result.price)} — price back above target`));
-    } else {
-      console.log(chalk.gray(`– ${fmt(result.price)} (target: ${fmt(product.targetPrice)})`));
-    }
-  }
-
-  if (delay) await new Promise((r) => setTimeout(r, delay));
-
-  return {
-    id: product.id,
-    ok: true,
-    price: result.price,
-    promotion: result.promotion || null,
-    onSale,
-  };
-}
-
-async function runChecks() {
-  lastCronRunAt = new Date().toISOString();
-  const now = new Date().toLocaleString("nl-NL");
-  console.log(chalk.bold(`\n[${now}] Running checks...`));
-  const users = await store.listUsersWithSettings();
-  const results = [];
-
-  for (const u of users) {
-    const interval = Math.max(1, u.check_interval_minutes || 60);
-    const lastRun = u.last_run_at ? new Date(u.last_run_at).getTime() : 0;
-    const due = Date.now() - lastRun >= interval * 60 * 1000;
-    if (!due) continue;
-
-    const lock = beginUserCheck(u.user_id, { source: "cron" });
-    if (!lock) {
-      console.log(chalk.gray(`  Skipping user ${u.user_id}: check already running`));
-      continue;
-    }
-
-    try {
-      const products = await store.listProducts(u.user_id);
-      const cfg = {
-        telegram: {
-          botToken: u.telegram_bot_token,
-          chatId: u.telegram_chat_id,
-        },
-      };
-
-      for (const product of products) {
-        results.push(await checkProduct(product, { cfg, delay: 2000 }));
-      }
-
-      await store.touchUserRun(u.user_id);
-    } finally {
-      endUserCheck(u.user_id, lock);
-    }
-  }
-
-  console.log(chalk.gray("Done.\n"));
-  return {
-    ok: true,
-    checked: results.length,
-    failed: results.filter((r) => !r.ok).length,
-    results,
-  };
-}
-
-async function runChecksForUser(userId) {
-  const settings = await store.getSettings(userId);
-  const products = await store.listProducts(userId);
-  const cfg = {
-    telegram: {
-      botToken: settings.telegram_bot_token,
-      chatId: settings.telegram_chat_id,
-    },
-  };
-
-  const results = [];
-  for (const product of products) {
-    results.push(await checkProduct(product, { cfg, delay: 2000 }));
-  }
-
-  await store.touchUserRun(userId);
-  return {
-    ok: true,
-    checked: results.length,
-    failed: results.filter((r) => !r.ok).length,
-    results,
-  };
-}
-
 // Schedule cron
 const cronExpr = "* * * * *";
-cron.schedule(cronExpr, runChecks);
+cron.schedule(cronExpr, checkRunner.runChecks);
 
 // ─── Start server ─────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3000;
@@ -593,7 +417,7 @@ async function start() {
     console.log(chalk.gray("   Cron: every 1 minute (per-user intervals enforced)\n"));
 
     // Run initial check
-    runChecks().catch((err) => console.error(chalk.red("Initial check failed:"), err));
+    checkRunner.runChecks().catch((err) => console.error(chalk.red("Initial check failed:"), err));
   });
 }
 
