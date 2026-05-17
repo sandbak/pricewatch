@@ -1,6 +1,6 @@
-const puppeteer = require("puppeteer");
 const { parsePrice } = require("./parsePrice");
 const { withRetry } = require("./retry");
+const { withPuppeteerPage } = require("./puppeteerPage");
 
 const HEADERS = {
   "User-Agent":
@@ -87,17 +87,7 @@ async function navigateAndExtract(page, url) {
 }
 
 async function scrape(url, options = {}) {
-  let browser;
-
-  try {
-    browser = await puppeteer.launch({
-      headless: "new",
-      args: ["--no-sandbox", "--disable-setuid-sandbox"],
-    });
-
-    const page = await browser.newPage();
-    await page.setUserAgent(HEADERS["User-Agent"]);
-
+  return withPuppeteerPage(HEADERS["User-Agent"], async (page) => {
     const navigateWithRetry = withRetry(navigateAndExtract);
     const data = await navigateWithRetry(page, url);
 
@@ -134,11 +124,7 @@ async function scrape(url, options = {}) {
       currency: "EUR",
       outOfStock: !!outOfStock,
     };
-  } finally {
-    if (browser) {
-      await browser.close();
-    }
-  }
+  });
 }
 
 module.exports = { scrape };
