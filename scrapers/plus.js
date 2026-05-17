@@ -10,204 +10,102 @@ const HEADERS = {
 };
 
 /**
- * Intercept API responses from the OutSystems SPA to extract product data.
- * OutSystems apps call internal REST/JSON APIs — we capture and parse them.
+ * Capture the product details API response from OutSystems SPA.
+ * The key endpoint is: /screenservices/ECP_Product_CW/ProductDetails/PDPContent/DataActionGetProductDetailsAndAgeInfo
+ * Returns: { data: { ProductOut: { Overview: { Name, Price, BaseUnitPrice, ... } } } }
  */
-function captureApiResponse(page) {
+function captureProductApi(page) {
   return new Promise((resolve) => {
-    const result = { apiData: null };
+    let productDetails = null;
 
-    // Intercept responses — OutSystems typically uses JSON APIs
     page.on("response", async (response) => {
       const url = response.url();
-      // OutSystems API endpoints typically contain "/api/" or return JSON
+      const contentType = response.headers()["content-type"] || "";
+
       if (
-        (url.includes("/api/") ||
-          url.includes("/widget/") ||
-          url.includes("/block/") ||
-          response.headers()["content-type"]?.includes("application/json")) &&
-        !url.includes("OutSystems") &&
-        !url.includes("manifest")
+        contentType.includes("application/json") &&
+        url.includes("DataActionGetProductDetailsAndAgeInfo")
       ) {
         try {
           const body = await response.json().catch(() => null);
-          if (body && !result.apiData) {
-            result.apiData = body;
+          if (body?.data?.ProductOut) {
+            productDetails = body.data.ProductOut;
           }
         } catch {
-          /* ignore non-JSON */
+          /* ignore */
         }
       }
     });
 
     // Resolve after timeout to let API calls complete
-    setTimeout(() => resolve(result.apiData), 6000);
+    setTimeout(() => resolve(productDetails), 8000);
   });
 }
 
 /**
- * Navigate to a URL and extract product data from the rendered page.
+ * Navigate to a URL and extract product data.
  */
 async function navigateAndExtract(page, url) {
   await page.setExtraHTTPHeaders({
     "Accept-Language": HEADERS["Accept-Language"],
   });
 
-  // Start capturing API responses before navigation
-  const apiPromise = captureApiResponse(page);
+  // Start capturing API before navigation
+  const apiPromise = captureProductApi(page);
 
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
 
   // Wait for JS rendering + API calls
-  await new Promise((r) => setTimeout(r, 8000));
+  await new Promise((r) => setTimeout(r, 10000));
 
-  // Wait for product title to appear
+  // Wait for product title to appear (confirms page is rendered)
   await page
-    .waitForSelector("h1, [class*='title'], [class*='product-name']", {
-      timeout: 10000,
-    })
+    .waitForSelector("h1, [class*='product-header']", { timeout: 10000 })
     .catch(() => {
       /* proceed anyway */
     });
 
-  // Capture API data
   const apiData = await apiPromise;
 
-  // Extract from rendered DOM
-  const data = await page.evaluate(() => {
+  // Extract from rendered DOM as fallback
+  const domData = await page.evaluate(() => {
     const q = (sel) => {
       const el = document.querySelector(sel);
       return el ? el.textContent.trim() : null;
     };
 
-    // ── Title ──
+    // Title
     const title =
       q("h1") ||
       q("[class*='product-name']") ||
       q("[class*='product-title']") ||
-      q("[class*='title']") ||
       "Unknown product";
 
-    // ── JSON-LD structured data ──
-    let jsonLdPrice = null;
-    let jsonLdRegularPrice = null;
-    let jsonLdTitle = null;
-    document
-      .querySelectorAll('script[type="application/ld+json"]')
-      .forEach((el) => {
-        try {
-          const d = JSON.parse(el.textContent);
-          const offers = d.offers || (d.graph ? d.graph?.[0]?.offers : null);
-          if (d["@type"] === "Product" || offers) {
-            jsonLdTitle = d.name || null;
-            if (offers?.price) {
-              jsonLdPrice = parseFloat(offers.price);
-            }
-            // LowPrice/Offer price vs regular
-            if (offers?.priceSpecification) {
-              jsonLdRegularPrice = parseFloat(
-                offers.priceSpecification?.price || 0
-              );
-            }
-          }
-        } catch {}
-      });
-
-    // ── Price selectors (generic, for JS-rendered content) ──
-    // Look for price patterns in text content
+    // Price — product-price-wrapper contains the full price
     const priceText =
-      q("[class*='price']") ||
+      q("[class*='product-price-wrapper']") ||
       q("[class*='product-price']") ||
-      q("[data-testid*='price']") ||
+      q("[class*='product-header-price']") ||
       null;
 
-    // Offer/promo price
-    const offerPriceText =
-      q("[class*='offer-price']") ||
-      q("[class*='sale-price']") ||
-      q("[class*='promotion']") ||
-      q("[class*='actieprij']") ||
-      q("[class*='actie-prijs']") ||
-      null;
-
-    // Regular/old price (strikethrough)
+    // Previous/regular price (if on promotion)
     const regularPriceText =
+      q("[class*='product-header-price-previous']") ||
       q("[class*='old-price']") ||
-      q("[class*='regular-price']") ||
       q("[class*='original-price']") ||
-      q("[class*='strikethrough']") ||
-      q("s[class*='price']") ||
       null;
 
-    // Promotion text
-    let promoText = null;
-    const promoEls = document.querySelectorAll(
-      "[class*='promo'], [class*='actie'], [class*='offer'], [class*='sale']"
-    );
-    for (const el of promoEls) {
-      const text = el.textContent.trim();
-      // Match Dutch promo patterns
-      const match = text.match(/(\d+)\s*voor\s*€?\s*([\d,.]+)/i);
-      if (match) {
-        promoText = match[0];
-        break;
-      }
-    }
+    // Promotion info
+    const promoText =
+      q("[class*='promotion']") ||
+      q("[class*='actie']") ||
+      q("[class*='offer-label']") ||
+      null;
 
-    return {
-      title,
-      jsonLdTitle,
-      jsonLdPrice,
-      jsonLdRegularPrice,
-      priceText,
-      offerPriceText,
-      regularPriceText,
-      promoText,
-      pageBody: document.body.innerText.substring(0, 3000),
-    };
+    return { title, priceText, regularPriceText, promoText };
   });
 
-  return { dom: data, apiData };
-}
-
-/**
- * Try to extract price from API response data (OutSystems JSON).
- */
-function extractFromApi(apiData) {
-  if (!apiData) return null;
-
-  // Flatten nested object to find price-like fields
-  const flatten = (obj, prefix = "") => {
-    const result = {};
-    for (const [key, value] of Object.entries(obj)) {
-      const fullKey = prefix ? `${prefix}.${key}` : key;
-      if (typeof value === "object" && value !== null) {
-        Object.assign(result, flatten(value, fullKey));
-      } else {
-        result[fullKey] = value;
-      }
-    }
-    return result;
-  };
-
-  const flat = flatten(apiData);
-  const keys = Object.keys(flat);
-
-  // Look for price fields
-  for (const key of keys) {
-    const lowerKey = key.toLowerCase();
-    const value = flat[key];
-    if (
-      (lowerKey.includes("price") ||
-        lowerKey.includes("prij") ||
-        lowerKey.includes("amount")) &&
-      typeof value === "number" &&
-      value > 0
-    ) {
-      return { price: value, source: "api", field: key };
-    }
-  }
-  return null;
+  return { dom: domData, apiData };
 }
 
 async function scrape(url, options = {}) {
@@ -228,21 +126,29 @@ async function scrape(url, options = {}) {
 
     const { dom, apiData } = result;
 
-    // Try API extraction first (most reliable for OutSystems SPAs)
-    const apiExtraction = extractFromApi(apiData);
+    // ── Extract from API (most reliable) ──
+    const overview = apiData?.Overview || {};
+    const apiTitle = overview.Name || overview.ProductName || null;
+    const apiPriceStr = overview.Price || "0";
+    const apiBaseUnitPrice = overview.BaseUnitPrice || null;
+    const apiSubtitle = overview.Subtitle || null;
 
-    // Title
-    const title = dom.title || dom.jsonLdTitle || "Unknown product";
+    const apiPrice = apiPriceStr
+      ? parseFloat(String(apiPriceStr).replace(",", "."))
+      : null;
 
-    // Prices — priority: JSON-LD > API > CSS selectors
+    // ── Title ──
+    const title = apiTitle || dom.title || "Unknown product";
+
+    // ── Prices ──
+    // API price is the current selling price
     const bonusPrice =
-      dom.jsonLdPrice ??
-      (apiExtraction ? apiExtraction.price : null) ??
-      parsePrice(dom.offerPriceText) ??
+      apiPrice ??
       parsePrice(dom.priceText);
 
+    // Regular price: API doesn't expose original price when on promotion.
+    // The DOM "product-header-price-previous" may have it.
     const regularPrice =
-      dom.jsonLdRegularPrice ??
       parsePrice(dom.regularPriceText) ??
       bonusPrice;
 
@@ -251,20 +157,12 @@ async function scrape(url, options = {}) {
         ? bonusPrice ?? regularPrice
         : regularPrice ?? bonusPrice;
 
-    // Promotion
-    let promotion = null;
-    if (dom.promoText) {
-      const match = dom.promoText.match(/(\d+)\s*voor\s*€?\s*([\d,.]+)/i);
-      if (match) {
-        const quantity = parseInt(match[1], 10);
-        const totalPrice = parseFloat(match[2].replace(",", "."));
-        const unitPrice = totalPrice / quantity;
-        promotion = {
-          quantity,
-          totalPrice,
-          unitPrice,
-          label: `${quantity} voor €${totalPrice.toFixed(2).replace(".", ",")}`,
-        };
+    // Unit price from subtitle: "Per Zak 500 g  (per kilo €4.78)"
+    let unitPrice = null;
+    if (apiSubtitle) {
+      const unitMatch = apiSubtitle.match(/\(per\s+(?:kilo|kg|stuk|liter|l)\s*[€]?\s*([\d]+[.,]\d+)\)/i);
+      if (unitMatch) {
+        unitPrice = parseFloat(unitMatch[1].replace(",", "."));
       }
     }
 
@@ -272,9 +170,9 @@ async function scrape(url, options = {}) {
       title,
       price: trackedPrice,
       regularPrice,
-      unitPrice: null,
+      unitPrice: unitPrice ? `€${unitPrice.toFixed(2).replace(".", ",")}` : null,
       opIsOp: false,
-      promotion,
+      promotion: null, // Plus doesn't expose promotion details in API
       currency: "EUR",
     };
   } finally {
