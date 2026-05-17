@@ -66,10 +66,14 @@ async function navigateAndExtract(page, url) {
 
     // ── Multi-buy detection ("2 voor €X,XX") ──────────────────────────
     let promoText = null;
-    const promoEls = document.querySelectorAll("[class*=actie], [class*=offer]");
+    const promoEls = document.querySelectorAll(
+      ".promotion-tags, .promotion-details, [class*=promo-tag], [class*=actie], [class*=offer]"
+    );
     for (const el of promoEls) {
       const text = el.textContent.trim();
-      const match = text.match(/(\d+)\s*voor\s*€?\s*([\d,.]+)/i);
+      // Filter out related product cards by checking for 'Bekijk aanbieding' noise
+      if (text.includes("Bekijk aanbieding")) continue;
+      const match = text.match(/(\d+)\s*voor\s*([\d,.]+)/i);
       if (match) {
         promoText = match[0];
         break;
