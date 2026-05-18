@@ -26,10 +26,23 @@ async function onceWithPuppeteerPage(userAgent, fn) {
   try {
     browser = await puppeteer.launch({
       headless: "new",
-      args: ["--no-sandbox", "--disable-setuid-sandbox"],
+      args: [
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-blink-features=AutomationControlled",
+        "--window-size=1365,768",
+      ],
     });
 
     const page = await browser.newPage();
+    await page.setViewport({ width: 1365, height: 768 });
+    await page.evaluateOnNewDocument(() => {
+      Object.defineProperty(navigator, "webdriver", { get: () => undefined });
+      Object.defineProperty(navigator, "languages", { get: () => ["nl-NL", "nl", "en-US", "en"] });
+      Object.defineProperty(navigator, "plugins", { get: () => [1, 2, 3, 4, 5] });
+      window.chrome = window.chrome || { runtime: {} };
+    });
+
     if (userAgent) {
       await page.setUserAgent(userAgent);
     }

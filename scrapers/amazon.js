@@ -35,7 +35,7 @@ async function navigateAndExtract(page, url) {
 
   // Wait for product title or price area
   await page
-    .waitForSelector("#productTitle, h1, #apex_desktop", { timeout: 10000 })
+    .waitForSelector("#productTitle, h1, #apex_desktop, #corePrice_feature_div, #corePriceDisplay_desktop_feature_div", { timeout: 15000 })
     .catch(() => {});
 
   return await page.evaluate(() => {
@@ -141,6 +141,19 @@ async function navigateAndExtract(page, url) {
     const pageNotFound =
       pageTitle.toLowerCase().includes("page not found") ||
       pageText.includes("the web address you entered is not a functioning page");
+    const robotSignals = [
+      pageText.includes("sorry, we just need to make sure you're not a robot"),
+      pageText.includes("to discuss automated access to amazon data"),
+      pageText.includes("automated access"),
+      pageText.includes("captcha"),
+    ].filter(Boolean).length;
+    const diagnostics = {
+      pageTitle: pageTitle.slice(0, 80),
+      currentUrl: window.location.href.slice(0, 120),
+      hasProductTitle: !!document.querySelector("#productTitle"),
+      hasPriceContainer: !!document.querySelector("#apex_desktop, #corePrice_feature_div, #corePriceDisplay_desktop_feature_div"),
+      textPreview: document.body.innerText.replace(/\s+/g, " ").slice(0, 160),
+    };
 
     return {
       title,
@@ -157,6 +170,8 @@ async function navigateAndExtract(page, url) {
       availability,
       hasCaptcha,
       pageNotFound,
+      robotSignals,
+      diagnostics,
     };
   });
 }
@@ -179,7 +194,7 @@ async function scrape(url, options = {}) {
       parsePrice(data.priceFromPartsText) ??
       parsePrice(data.ourPrice);
 
-    if (data.hasCaptcha) {
+    if (data.hasCaptcha || data.robotSignals > 0) {
       throw new Error("Amazon blocked the scraper with a CAPTCHA/robot check");
     }
 
@@ -200,7 +215,10 @@ async function scrape(url, options = {}) {
       data.availability?.toLowerCase().includes("out of stock");
 
     if (price == null && !outOfStock) {
-      throw new Error("Amazon price not found — page layout may have changed or Amazon blocked the request");
+      const detail = data.diagnostics
+        ? `title=${data.diagnostics.pageTitle || "?"}; hasTitle=${data.diagnostics.hasProductTitle}; hasPrice=${data.diagnostics.hasPriceContainer}; preview=${data.diagnostics.textPreview || "?"}`
+        : "no diagnostics";
+      throw new Error(`Amazon price not found — page layout may have changed or Amazon blocked the request (${detail})`);
     }
 
     return {
