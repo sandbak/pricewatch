@@ -8,9 +8,14 @@ Web app for tracking product prices and sending Telegram alerts when a product d
 |---|---|
 | `ah.nl` | Tracks Bonuskaart price by default. Detects Op=Op and multi-buy deals. |
 | `bol.com` | Uses product structured data where available. |
-| `amazon.nl` | Best-effort; Amazon may change layouts or block scraping. |
 | `plus.nl` | Supports promotions from PLUS product APIs. |
 | `jumbo.com` | Supports regular offers and `2 voor` multi-buy deals. |
+
+### Temporarily suspended shops
+
+| Shop | Notes |
+|---|---|
+| `amazon.nl` | Temporarily removed from the frontend because Amazon.nl returns HTTP 503 block pages from Railway/server-side scraping. The Amazon scraper/backend code remains in the repository for potential future development, such as proxy-based or API-based support. |
 
 ## Requirements
 

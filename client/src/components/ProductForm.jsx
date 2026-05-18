@@ -3,12 +3,14 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useApi } from "../api.js";
 import shops from "../../../shared/shops.json";
 
-const SUPPORTED_DOMAINS = shops.map((shop) => shop.domain);
+const FRONTEND_SUPPORTED_DOMAINS = shops
+  .filter((shop) => shop.frontendSupported !== false)
+  .map((shop) => shop.domain);
 
 function isSupportedUrl(value) {
   try {
     const hostname = new URL(value).hostname.replace(/^www\./, "").toLowerCase();
-    return SUPPORTED_DOMAINS.some((domain) => hostname === domain || hostname.endsWith(`.${domain}`));
+    return FRONTEND_SUPPORTED_DOMAINS.some((domain) => hostname === domain || hostname.endsWith(`.${domain}`));
   } catch {
     return false;
   }
@@ -54,7 +56,7 @@ export default function ProductForm({ product, onClose }) {
     }
     if (!isSupportedUrl(url.trim())) {
       setError(
-        `This shop is not supported yet. Please use a product URL from ${SUPPORTED_DOMAINS.join(", ")}.`
+        `This shop is not supported yet. Please use a product URL from ${FRONTEND_SUPPORTED_DOMAINS.join(", ")}.`
       );
       return;
     }
@@ -99,7 +101,7 @@ export default function ProductForm({ product, onClose }) {
               className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
             />
             <p className="mt-1 text-xs text-gray-500">
-              Supported shops: {SUPPORTED_DOMAINS.join(", ")}
+              Supported shops: {FRONTEND_SUPPORTED_DOMAINS.join(", ")}
             </p>
           </div>
 

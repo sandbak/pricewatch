@@ -1,7 +1,12 @@
 [
   { "domain": "ah.nl", "name": "AH" },
   { "domain": "bol.com", "name": "Bol" },
-  { "domain": "amazon.nl", "name": "Amazon" },
+  {
+    "domain": "amazon.nl",
+    "name": "Amazon",
+    "frontendSupported": false,
+    "note": "Temporarily suspended in the frontend because Amazon.nl blocks Railway/server-side scraping with HTTP 503 responses. Scraper code is kept for potential future development."
+  },
   { "domain": "plus.nl", "name": "PLUS" },
   { "domain": "jumbo.com", "name": "Jumbo" }
 ]
