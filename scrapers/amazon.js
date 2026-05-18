@@ -67,9 +67,17 @@ async function navigateAndExtract(page, url) {
     // ── Availability ──
     const availability = q("#availability") || q(".a-color-state") || null;
 
-    // ── Full page text for price extraction ──
-    const apexDesktop = q("#apex_desktop");
-    const corePrice = q("#corePriceDisplay_desktop_feature_div");
+    // ── Blocking / invalid page detection ──
+    const pageText = document.body.innerText.toLowerCase();
+    const pageTitle = document.title || "";
+    const hasCaptcha =
+      pageText.includes("enter the characters you see below") ||
+      pageText.includes("type the characters you see in this image") ||
+      pageText.includes("robot check") ||
+      document.querySelector('form[action*="validateCaptcha"]') != null;
+    const pageNotFound =
+      pageTitle.toLowerCase().includes("page not found") ||
+      pageText.includes("the web address you entered is not a functioning page");
 
     return {
       title,
@@ -81,6 +89,8 @@ async function navigateAndExtract(page, url) {
       basisPrice,
       unitPriceText,
       availability,
+      hasCaptcha,
+      pageNotFound,
     };
   });
 }
@@ -101,6 +111,14 @@ async function scrape(url, options = {}) {
       parsePrice(data.aPrice) ??
       parsePrice(data.ourPrice);
 
+    if (data.hasCaptcha) {
+      throw new Error("Amazon blocked the scraper with a CAPTCHA/robot check");
+    }
+
+    if (data.pageNotFound) {
+      throw new Error("Amazon product page not found");
+    }
+
     // ── Regular price (RRP/strike-through) ──
     const regularPrice =
       parsePrice(data.strikePrice) ??
@@ -111,6 +129,10 @@ async function scrape(url, options = {}) {
       ?.toLowerCase()
       .includes("currently unavailable") ||
       data.availability?.toLowerCase().includes("out of stock");
+
+    if (price == null && !outOfStock) {
+      throw new Error("Amazon price not found — page layout may have changed or Amazon blocked the request");
+    }
 
     return {
       title,

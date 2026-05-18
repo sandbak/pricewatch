@@ -48,12 +48,12 @@ async function checkProduct(product, options = {}) {
     });
   } catch (err) {
     console.log(chalk.yellow(`⚠ scrape failed: ${err.message}`));
-    return { id: product.id, ok: false, error: err.message };
+    return { id: product.id, label, ok: false, error: err.message };
   }
 
   if (result.price == null) {
     console.log(chalk.yellow("⚠ price not found"));
-    return { id: product.id, ok: false, error: "price not found" };
+    return { id: product.id, label, ok: false, error: `price not found for ${label}` };
   }
 
   const entry = product;
@@ -107,6 +107,7 @@ async function checkProduct(product, options = {}) {
 
   return {
     id: product.id,
+    label,
     ok: true,
     price: result.price,
     promotion: result.promotion || null,

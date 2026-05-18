@@ -128,7 +128,10 @@ export default function ProductList() {
           const checked = job.result?.checked ?? 0;
           const failed = job.result?.failed ?? 0;
           if (failed > 0) {
-            const firstError = job.result?.results?.find((r) => !r.ok)?.error;
+            const firstFailure = job.result?.results?.find((r) => !r.ok);
+            const firstError = firstFailure
+              ? `${firstFailure.label || firstFailure.id || "Product"}: ${firstFailure.error}`
+              : null;
             setCheckNowMessage({
               type: "error",
               text: `Checked ${checked} product(s), ${failed} failed${firstError ? `: ${firstError}` : "."}`,
