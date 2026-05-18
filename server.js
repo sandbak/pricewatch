@@ -237,6 +237,7 @@ app.post("/api/check-now", requireAuth, async (req, res) => {
       queued: false,
       running: true,
       message: "Check already running",
+      source: activeCheck.source,
       jobId: running?.id || null,
     });
   }

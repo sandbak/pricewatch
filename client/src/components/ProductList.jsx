@@ -49,6 +49,7 @@ export default function ProductList() {
   const [editingProduct, setEditingProduct] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [isCheckingNow, setIsCheckingNow] = useState(false);
+  const [checkNowMessage, setCheckNowMessage] = useState(null);
   const checkPollRef = useRef(null);
 
   const { data: products, isLoading } = useQuery({
@@ -72,40 +73,83 @@ export default function ProductList() {
 
   const checkNowMutation = useMutation({
     mutationFn: api.checkNow,
-    onMutate: () => setIsCheckingNow(true),
+    onMutate: () => {
+      setCheckNowMessage(null);
+      setIsCheckingNow(true);
+    },
     onSuccess: async (data) => {
       await queryClient.invalidateQueries({ queryKey: ["products"] });
 
       const jobId = data?.jobId;
       if (!jobId) {
+        setCheckNowMessage({
+          type: "info",
+          text:
+            data?.message ||
+            (data?.source === "cron"
+              ? "A scheduled check is already running. Try again shortly."
+              : "Check already running."),
+        });
         setIsCheckingNow(false);
         return;
       }
 
       let attempts = 0;
       const maxAttempts = 120; // ~10 minutes at 5s interval
+      let finished = false;
       if (checkPollRef.current) {
         clearInterval(checkPollRef.current);
       }
 
-      checkPollRef.current = setInterval(async () => {
+      const pollJob = async () => {
         attempts += 1;
         const job = await api.getCheckNowJob(jobId).catch(() => null);
         await queryClient.invalidateQueries({ queryKey: ["products"] });
 
         const done = job && (job.status === "done" || job.status === "failed");
         if (done || attempts >= maxAttempts) {
-          clearInterval(checkPollRef.current);
-          checkPollRef.current = null;
+          finished = true;
+          if (checkPollRef.current) {
+            clearInterval(checkPollRef.current);
+            checkPollRef.current = null;
+          }
           setIsCheckingNow(false);
+
+          if (!job) {
+            setCheckNowMessage({ type: "error", text: "Unable to read check status." });
+            return;
+          }
+
+          if (job.status === "failed") {
+            setCheckNowMessage({ type: "error", text: job.error || "Check failed." });
+            return;
+          }
+
+          const checked = job.result?.checked ?? 0;
+          const failed = job.result?.failed ?? 0;
+          if (failed > 0) {
+            const firstError = job.result?.results?.find((r) => !r.ok)?.error;
+            setCheckNowMessage({
+              type: "error",
+              text: `Checked ${checked} product(s), ${failed} failed${firstError ? `: ${firstError}` : "."}`,
+            });
+          } else {
+            setCheckNowMessage({ type: "success", text: `Checked ${checked} product(s).` });
+          }
         }
-      }, 5000);
+      };
+
+      await pollJob();
+      if (!finished && !checkPollRef.current) {
+        checkPollRef.current = setInterval(pollJob, 5000);
+      }
     },
-    onError: () => {
+    onError: (err) => {
       if (checkPollRef.current) {
         clearInterval(checkPollRef.current);
         checkPollRef.current = null;
       }
+      setCheckNowMessage({ type: "error", text: err.message || "Check failed." });
       setIsCheckingNow(false);
     },
   });
@@ -160,6 +204,20 @@ export default function ProductList() {
       {checkNowMutation.isError && (
         <div className="mb-4 bg-red-900/40 border border-red-800 text-red-300 text-sm rounded-lg px-3 py-2">
           {checkNowMutation.error.message}
+        </div>
+      )}
+
+      {checkNowMessage && (
+        <div
+          className={`mb-4 text-sm rounded-lg px-3 py-2 border ${
+            checkNowMessage.type === "success"
+              ? "bg-green-900/40 border-green-800 text-green-300"
+              : checkNowMessage.type === "info"
+                ? "bg-blue-900/40 border-blue-800 text-blue-300"
+                : "bg-red-900/40 border-red-800 text-red-300"
+          }`}
+        >
+          {checkNowMessage.text}
         </div>
       )}
 
