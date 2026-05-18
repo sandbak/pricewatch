@@ -8,6 +8,20 @@ const HEADERS = {
   Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
 };
 
+function normalizeAmazonUrl(url) {
+  try {
+    const parsed = new URL(url);
+    const match = parsed.pathname.match(/\/dp\/([A-Z0-9]{10})/i);
+    if (!match) return url;
+    parsed.pathname = `/dp/${match[1]}`;
+    parsed.search = "";
+    parsed.hash = "";
+    return parsed.toString();
+  } catch {
+    return url;
+  }
+}
+
 /**
  * Navigate and extract product data from Amazon.nl using Puppeteer.
  */
@@ -16,7 +30,7 @@ async function navigateAndExtract(page, url) {
     "Accept-Language": HEADERS["Accept-Language"],
   });
 
-  await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
+  await page.goto(normalizeAmazonUrl(url), { waitUntil: "domcontentloaded", timeout: 30000 });
   await new Promise((r) => setTimeout(r, 5000)); // wait for JS rendering
 
   // Wait for product title or price area
@@ -29,6 +43,47 @@ async function navigateAndExtract(page, url) {
       const el = document.querySelector(sel);
       return el ? el.textContent.trim() : null;
     };
+
+    const firstText = (selectors) => {
+      for (const sel of selectors) {
+        const text = q(sel);
+        if (text) return text;
+      }
+      return null;
+    };
+
+    const priceFromParts = (containerSelector) => {
+      const container = document.querySelector(containerSelector);
+      if (!container) return null;
+      const whole = container.querySelector(".a-price-whole")?.textContent?.trim() || "";
+      const fraction = container.querySelector(".a-price-fraction")?.textContent?.trim() || "";
+      if (!whole && !fraction) return null;
+      return `€${whole}${fraction ? `.${fraction}` : ""}`;
+    };
+
+    const priceFromPartsText =
+      priceFromParts("#corePrice_feature_div") ||
+      priceFromParts("#corePriceDisplay_desktop_feature_div") ||
+      priceFromParts("#apex_desktop") ||
+      priceFromParts("#corePrice_desktop") ||
+      null;
+
+    let jsonLdPrice = null;
+    let jsonLdRegularPrice = null;
+    document.querySelectorAll('script[type="application/ld+json"]').forEach((el) => {
+      try {
+        const data = JSON.parse(el.textContent);
+        const items = Array.isArray(data) ? data : [data];
+        for (const item of items) {
+          if (item?.['@type'] !== "Product" && !item?.offers) continue;
+          const offers = Array.isArray(item.offers) ? item.offers[0] : item.offers;
+          if (!offers) continue;
+          if (offers.price != null) jsonLdPrice = String(offers.price);
+          if (offers.lowPrice != null) jsonLdPrice = String(offers.lowPrice);
+          if (offers.highPrice != null) jsonLdRegularPrice = String(offers.highPrice);
+        }
+      } catch {}
+    });
 
     // ── Title ──
     const title =
@@ -51,7 +106,15 @@ async function navigateAndExtract(page, url) {
       null;
 
     // CSS class-based selectors
-    const aPrice = q(".a-price .a-offscreen");
+    const aPrice = firstText([
+      "#corePrice_feature_div .a-price .a-offscreen",
+      "#corePriceDisplay_desktop_feature_div .a-price .a-offscreen",
+      "#apex_desktop .a-price .a-offscreen",
+      "#corePrice_desktop .a-price .a-offscreen",
+      "#newBuyBoxPrice",
+      "#price_inside_buybox",
+      ".a-price .a-offscreen",
+    ]);
 
     // ── Regular/List price (RRP, crossed-out) ──
     // Apex layout: strike-through price
@@ -85,6 +148,9 @@ async function navigateAndExtract(page, url) {
       priceToPay,
       ourPrice,
       aPrice,
+      priceFromPartsText,
+      jsonLdPrice,
+      jsonLdRegularPrice,
       strikePrice,
       basisPrice,
       unitPriceText,
@@ -108,7 +174,9 @@ async function scrape(url, options = {}) {
     const price =
       parsePrice(data.apexPriceLabel) ??
       parsePrice(data.priceToPay) ??
+      parsePrice(data.jsonLdPrice) ??
       parsePrice(data.aPrice) ??
+      parsePrice(data.priceFromPartsText) ??
       parsePrice(data.ourPrice);
 
     if (data.hasCaptcha) {
@@ -122,7 +190,8 @@ async function scrape(url, options = {}) {
     // ── Regular price (RRP/strike-through) ──
     const regularPrice =
       parsePrice(data.strikePrice) ??
-      parsePrice(data.basisPrice);
+      parsePrice(data.basisPrice) ??
+      parsePrice(data.jsonLdRegularPrice);
 
     // ── Availability ──
     const outOfStock = data.availability

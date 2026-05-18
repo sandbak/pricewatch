@@ -13,6 +13,7 @@ function isRetryablePuppeteerError(err) {
     /timeout/i.test(message) ||
     /navigation/i.test(message) ||
     /net::/i.test(message) ||
+    /amazon price not found/i.test(message) ||
     /target closed/i.test(message) ||
     /browser has disconnected/i.test(message) ||
     /protocol error/i.test(message)
