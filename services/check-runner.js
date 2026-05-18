@@ -172,10 +172,23 @@ async function runChecksForUser(userId) {
     },
   };
 
-  const results = [];
-  for (const product of products) {
-    results.push(await checkProduct(product, { cfg, delay: 2000 }));
+  // Manual checks should feel responsive. Cron checks stay sequential with a
+  // delay, but manual runs use small batches so a slow webshop does not block
+  // every other product unnecessarily.
+  const concurrency = 2;
+  const results = new Array(products.length);
+  let nextIndex = 0;
+
+  async function worker() {
+    while (nextIndex < products.length) {
+      const index = nextIndex++;
+      results[index] = await checkProduct(products[index], { cfg });
+    }
   }
+
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, products.length) }, () => worker())
+  );
 
   await store.touchUserRun(userId);
   return {
