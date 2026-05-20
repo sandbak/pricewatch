@@ -61,7 +61,7 @@ On Railway, deploy the app with a Postgres service and the environment variables
 
 - Users add products in the web UI.
 - Product data and per-user settings are stored in Postgres.
-- The server runs a cron every minute and enforces each user's configured check interval.
+- The server runs a cron every minute and enforces each user's configured check interval, entered in hours with a 6-hour minimum.
 - Users can also trigger a manual "Check now" run from the UI.
 
 ## Notification format

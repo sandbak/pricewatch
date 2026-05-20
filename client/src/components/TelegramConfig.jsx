@@ -8,7 +8,7 @@ export default function TelegramConfig() {
   const queryClient = useQueryClient();
 
   const [botToken, setBotToken] = useState("");
-  const [checkInterval, setCheckInterval] = useState("");
+  const [checkIntervalHours, setCheckIntervalHours] = useState("");
   const [initialized, setInitialized] = useState(false);
   const [toast, setToast] = useState(null);
 
@@ -28,7 +28,7 @@ export default function TelegramConfig() {
   useEffect(() => {
     if (!config || initialized) return;
     setBotToken("");
-    setCheckInterval(config.checkIntervalMinutes != null ? String(config.checkIntervalMinutes) : "60");
+    setCheckIntervalHours(config.checkIntervalHours != null ? String(config.checkIntervalHours) : "6");
     setInitialized(true);
   }, [config, initialized]);
 
@@ -36,7 +36,7 @@ export default function TelegramConfig() {
     mutationFn: () =>
       api.updateConfig({
         botToken: botToken.trim(),
-        checkIntervalMinutes: parseInt(checkInterval, 10) || 60,
+        checkIntervalHours: parseInt(checkIntervalHours, 10) || 6,
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["config"] });
@@ -140,15 +140,18 @@ export default function TelegramConfig() {
 
             <div>
               <label className="block text-sm font-medium text-gray-300 mb-1">
-                Check Interval (minutes)
+                Check Interval (hours)
               </label>
               <input
                 type="number"
-                min="5"
-                value={checkInterval}
-                onChange={(e) => setCheckInterval(e.target.value)}
+                min="6"
+                value={checkIntervalHours}
+                onChange={(e) => setCheckIntervalHours(e.target.value)}
                 className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               />
+              <p className="mt-1 text-xs text-gray-500">
+                Minimum interval is 6 hours.
+              </p>
             </div>
 
             <div className="flex items-center gap-3 pt-2">

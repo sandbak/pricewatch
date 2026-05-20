@@ -123,7 +123,7 @@ async function runChecks() {
   const results = [];
 
   for (const u of users) {
-    const interval = Math.max(1, u.check_interval_minutes || 60);
+    const interval = Math.max(360, u.check_interval_minutes || 360);
     const lastRun = u.last_run_at ? new Date(u.last_run_at).getTime() : 0;
     const due = Date.now() - lastRun >= interval * 60 * 1000;
     if (!due) continue;

@@ -28,6 +28,11 @@ const checkRunner = require("./services/check-runner");
 const checkJobs = new Map();
 const CHECK_JOB_TTL_MS = 30 * 60 * 1000;
 const PROCESS_STARTED_AT = new Date();
+const MIN_CHECK_INTERVAL_HOURS = 6;
+
+function intervalMinutesToHours(minutes) {
+  return Math.max(MIN_CHECK_INTERVAL_HOURS, Math.ceil((minutes || 360) / 60));
+}
 
 function cleanupFinishedJobs(now = Date.now()) {
   for (const [id, job] of checkJobs.entries()) {
@@ -297,6 +302,7 @@ app.get("/api/config", requireAuth, async (req, res) => {
 
   res.json({
     checkIntervalMinutes: settings.check_interval_minutes,
+    checkIntervalHours: intervalMinutesToHours(settings.check_interval_minutes),
     telegram: {
       botToken: settings.telegram_bot_token ? "***" : null,
       chatId: settings.telegram_chat_id ? "***" : null,
@@ -306,10 +312,14 @@ app.get("/api/config", requireAuth, async (req, res) => {
 
 // PUT /api/config — update settings and/or Telegram creds
 app.put("/api/config", requireAuth, async (req, res) => {
-  const { checkIntervalMinutes, botToken, chatId } = req.body;
+  const { checkIntervalHours, checkIntervalMinutes, botToken, chatId } = req.body;
+  const intervalMinutes =
+    checkIntervalHours != null
+      ? Math.max(MIN_CHECK_INTERVAL_HOURS, parseInt(checkIntervalHours, 10) || MIN_CHECK_INTERVAL_HOURS) * 60
+      : checkIntervalMinutes;
 
   await store.updateSettings(req.authUser.id, {
-    checkIntervalMinutes,
+    checkIntervalMinutes: intervalMinutes,
     botToken,
     chatId,
   });
@@ -369,6 +379,7 @@ app.get("/api/status", requireAuth, async (req, res) => {
   res.json({
     productCount: products.length,
     checkIntervalMinutes: settings.check_interval_minutes,
+    checkIntervalHours: intervalMinutesToHours(settings.check_interval_minutes),
     lastRunAt: settings.last_run_at || null,
     lastChecked,
     supportedDomains: scrapers.SUPPORTED_DOMAINS,
