@@ -210,10 +210,9 @@ async function runChecksForUser(userId) {
     },
   };
 
-  // Manual checks should feel responsive. Cron checks stay sequential with a
-  // delay, but manual runs use small batches so a slow webshop does not block
-  // every other product unnecessarily.
-  const concurrency = 2;
+  // Keep manual checks sequential on small Railway containers. Most scrapers
+  // use Puppeteer, and concurrent Chromium pages can exhaust process limits.
+  const concurrency = 1;
   const results = new Array(products.length);
   let nextIndex = 0;
 

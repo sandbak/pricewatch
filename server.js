@@ -24,6 +24,7 @@ const store = require("./lib/store");
 const scrapers = require("./scrapers");
 const telegram = require("./telegram");
 const checkRunner = require("./services/check-runner");
+const { closeSharedBrowser } = require("./scrapers/puppeteerPage");
 
 const checkJobs = new Map();
 const CHECK_JOB_TTL_MS = 30 * 60 * 1000;
@@ -430,6 +431,15 @@ process.on("uncaughtException", (err) => {
 process.on("unhandledRejection", (reason) => {
   console.error(chalk.red("Unhandled rejection:"), reason);
 });
+
+async function shutdown(signal) {
+  console.log(chalk.gray(`Received ${signal}; shutting down browser...`));
+  await closeSharedBrowser();
+  process.exit(0);
+}
+
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));
 
 async function start() {
   await db.initSchema();
