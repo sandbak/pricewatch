@@ -393,6 +393,7 @@ app.get("/api/health", (req, res) => {
     startedAt: PROCESS_STARTED_AT.toISOString(),
     uptimeSeconds: Math.floor(process.uptime()),
     lastCronRunAt: checkRunner.getLastCronRunAt(),
+    cron: checkRunner.getCronStatus(),
   });
 });
 
@@ -417,12 +418,9 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: err.message || "Internal server error" });
 });
 
-// Schedule cron
-const cronExpr = "* * * * *";
-cron.schedule(cronExpr, checkRunner.runChecks);
-
 // ─── Start server ─────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3000;
+const cronExpr = "* * * * *";
 
 process.on("uncaughtException", (err) => {
   console.error(chalk.red("Uncaught exception:"), err);
@@ -440,6 +438,16 @@ async function start() {
     console.log(chalk.bold.cyan("\n🛒 Price Watcher"));
     console.log(chalk.gray(`   API + UI running on http://localhost:${PORT}`));
     console.log(chalk.gray("   Cron: every 1 minute (per-user intervals enforced)\n"));
+
+    cron.schedule(
+      cronExpr,
+      () => {
+        return checkRunner.runChecks().catch((err) => {
+          console.error(chalk.red("Scheduled check failed:"), err);
+        });
+      },
+      { noOverlap: true }
+    );
 
     // Run initial check
     checkRunner.runChecks().catch((err) => console.error(chalk.red("Initial check failed:"), err));

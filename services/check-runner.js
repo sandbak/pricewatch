@@ -8,6 +8,9 @@ const telegram = require("../telegram");
 // In-memory run locks per user to avoid duplicate concurrent checks.
 const activeUserChecks = new Map();
 let lastCronRunAt = null;
+let lastCronFinishedAt = null;
+let lastCronError = null;
+let lastCronSummary = null;
 
 function beginUserCheck(userId, details = {}) {
   if (activeUserChecks.has(userId)) return null;
@@ -33,6 +36,15 @@ function getActiveUserCheck(userId) {
 
 function getLastCronRunAt() {
   return lastCronRunAt;
+}
+
+function getCronStatus() {
+  return {
+    lastRunAt: lastCronRunAt,
+    lastFinishedAt: lastCronFinishedAt,
+    lastError: lastCronError,
+    lastSummary: lastCronSummary,
+  };
 }
 
 async function checkProduct(product, options = {}) {
@@ -117,10 +129,21 @@ async function checkProduct(product, options = {}) {
 
 async function runChecks() {
   lastCronRunAt = new Date().toISOString();
+  lastCronFinishedAt = null;
+  lastCronError = null;
   const now = new Date().toLocaleString("nl-NL");
   console.log(chalk.bold(`\n[${now}] Running checks...`));
-  const users = await store.listUsersWithSettings();
   const results = [];
+  const errors = [];
+
+  let users;
+  try {
+    users = await store.listUsersWithSettings();
+  } catch (err) {
+    lastCronError = err.message;
+    lastCronFinishedAt = new Date().toISOString();
+    throw err;
+  }
 
   for (const u of users) {
     const interval = Math.max(360, u.check_interval_minutes || 360);
@@ -148,9 +171,23 @@ async function runChecks() {
       }
 
       await store.touchUserRun(u.user_id);
+    } catch (err) {
+      errors.push({ userId: u.user_id, error: err.message });
+      console.error(chalk.red(`  User ${u.user_id} check failed:`), err);
     } finally {
       endUserCheck(u.user_id, lock);
     }
+  }
+
+  lastCronFinishedAt = new Date().toISOString();
+  lastCronSummary = {
+    users: users.length,
+    checked: results.length,
+    failed: results.filter((r) => !r.ok).length,
+    errors: errors.length,
+  };
+  if (errors.length) {
+    lastCronError = errors.map((err) => `user ${err.userId}: ${err.error}`).join("; ");
   }
 
   console.log(chalk.gray("Done.\n"));
@@ -158,6 +195,7 @@ async function runChecks() {
     ok: true,
     checked: results.length,
     failed: results.filter((r) => !r.ok).length,
+    errors,
     results,
   };
 }
@@ -204,6 +242,7 @@ module.exports = {
   endUserCheck,
   getActiveUserCheck,
   getLastCronRunAt,
+  getCronStatus,
   checkProduct,
   runChecks,
   runChecksForUser,
